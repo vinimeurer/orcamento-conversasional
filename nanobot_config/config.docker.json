@@ -1,7 +1,7 @@
 {
   "providers": {
     "ollama": {
-      "apiBase": "http://ollama:11434"
+      "apiBase": "http://ollama:11434/v1"
     }
   },
   "modelPresets": {
