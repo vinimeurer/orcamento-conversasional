@@ -1,0 +1,39 @@
+{
+  "providers": {
+    "ollama": {
+      "apiBase": "http://localhost:11434"
+    }
+  },
+  "modelPresets": {
+    "local": {
+      "label": "Qwen 2.5 3B (local)",
+      "provider": "ollama",
+      "model": "qwen2.5:3b",
+      "maxTokens": 2048,
+      "contextWindowTokens": 32768,
+      "temperature": 0.2
+    }
+  },
+  "agents": {
+    "defaults": {
+      "modelPreset": "local"
+    }
+  },
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "token": "${TELEGRAM_TOKEN}"
+    }
+  },
+  "tools": {
+    "mcpServers": {
+      "orcamento": {
+        "command": "python3",
+        "args": ["mcp_server/expense_tools.py"],
+        "env": {
+          "DATABASE_URL": "${DATABASE_URL}"
+        }
+      }
+    }
+  }
+}
