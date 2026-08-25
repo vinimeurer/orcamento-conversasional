@@ -1,22 +1,23 @@
 {
   "providers": {
-    "ollama": {
-      "apiBase": "http://ollama:11434/v1"
+    "gemini": {
+      "apiKey": "${GEMINI_API_KEY}"
     }
   },
   "modelPresets": {
-    "local": {
-      "label": "Qwen 2.5 3B (local)",
-      "provider": "ollama",
-      "model": "qwen2.5:3b",
-      "maxTokens": 2048,
-      "contextWindowTokens": 32768,
+    "primary": {
+      "label": "Gemini Flash",
+      "provider": "gemini",
+      "model": "${GEMINI_MODEL}",
+      "maxTokens": 4096,
+      "contextWindowTokens": 262144,
       "temperature": 0.2
     }
   },
   "agents": {
     "defaults": {
-      "modelPreset": "local"
+      "modelPreset": "primary",
+      "maxToolIterations": 6
     }
   },
   "channels": {
@@ -29,7 +30,11 @@
   "tools": {
     "mcpServers": {
       "orcamento": {
-        "url": "http://mcp-orcamento:8100/mcp"
+        "command": "/opt/mcpvenv/bin/python3",
+        "args": ["/opt/mcp_server/expense_tools.py"],
+        "env": {
+          "DATABASE_URL": "${DATABASE_URL}"
+        }
       }
     }
   }
