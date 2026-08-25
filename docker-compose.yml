@@ -18,56 +18,6 @@ services:
       timeout: 5s
       retries: 10
 
-  ollama:
-    image: ollama/ollama:latest
-    container_name: orcamento_ollama
-    restart: unless-stopped
-    ports:
-      - "11434:11434"
-    volumes:
-      - orcamento_ollama_models:/root/.ollama
-    healthcheck:
-      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 20s
-    # Descomente para usar GPU NVIDIA (requer nvidia-container-toolkit):
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
-
-  ollama-pull:
-    image: ollama/ollama:latest
-    container_name: orcamento_ollama_pull
-    depends_on:
-      ollama:
-        condition: service_healthy
-    entrypoint: ["/bin/sh", "-c", "OLLAMA_HOST=http://ollama:11434 ollama pull qwen2.5:3b"]
-    restart: "no"
-
-  mcp-orcamento:
-    build:
-      context: .
-      dockerfile: mcp_server/Dockerfile
-    container_name: orcamento_mcp
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: postgresql://orcamento:orcamento@postgres:5432/orcamento
-    depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8100/mcp', timeout=2)\" || exit 0"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 5s
-
   nanobot:
     build:
       context: .
@@ -76,21 +26,26 @@ services:
     restart: unless-stopped
     environment:
       TELEGRAM_TOKEN: ${TELEGRAM_TOKEN}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      # Default aplicado aqui para o container subir mesmo sem a variável
+      # definida no .env (o nanobot falha se ${GEMINI_MODEL} estiver vazio).
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.6-flash}
+      DATABASE_URL: postgresql://orcamento:orcamento@postgres:5432/orcamento
     volumes:
       - ./nanobot_config/config.docker.json:/root/.nanobot/config.json:ro
       - ./nanobot_config/SOUL.md:/root/.nanobot/workspace/SOUL.md:ro
       - ./nanobot_config/AGENTS.md:/root/.nanobot/workspace/AGENTS.md:ro
       - ./nanobot_config/USER.md:/root/.nanobot/workspace/USER.md:ro
       - orcamento_nanobot_memory:/root/.nanobot/workspace/memory
+      # Servidor MCP executado via stdio dentro deste container.
+      # A estrutura mcp_server/ + db/ precisa manter o layout relativo,
+      # porque o expense_tools.py importa db.connection pelo diretório pai.
+      - ./mcp_server:/opt/mcp_server:ro
+      - ./db:/opt/db:ro
     depends_on:
       postgres:
         condition: service_healthy
-      mcp-orcamento:
-        condition: service_started
-      ollama-pull:
-        condition: service_completed_successfully
 
 volumes:
   orcamento_pgdata:
-  orcamento_ollama_models:
   orcamento_nanobot_memory:

@@ -1,8 +1,9 @@
 # Orçamento Conversacional — Pipeline Core
 
-Sistema de registro de despesas por linguagem natural, via Telegram, usando
-um modelo de linguagem local (Qwen 2.5 3B rodando no Ollama), orquestrado
-pelo Nanobot, com os dados salvos em Postgres.
+Sistema de registro de despesas por linguagem natural, via Telegram,
+usando o **Google Gemini** (API oficial, modelo configurável via `.env`,
+por padrão `gemini-3.6-flash`) como modelo de linguagem, orquestrado pelo
+Nanobot, com os dados salvos em Postgres.
 
 Este documento assume que você **nunca rodou Docker antes** e explica cada
 passo, cada comando, e o que esperar como resultado de cada um.
@@ -13,21 +14,22 @@ passo, cada comando, e o que esperar como resultado de cada um.
 
 1. [O que você precisa ter instalado](#1-o-que-você-precisa-ter-instalado)
 2. [Conseguir o token do bot no Telegram](#2-conseguir-o-token-do-bot-no-telegram)
-3. [Configurar o arquivo .env](#3-configurar-o-arquivo-env)
-4. [Subir tudo com Docker](#4-subir-tudo-com-docker)
-5. [Testar no Telegram](#5-testar-no-telegram)
-6. [Comandos do dia a dia](#6-comandos-do-dia-a-dia)
-7. [Problemas comuns e como resolver](#7-problemas-comuns-e-como-resolver)
-8. [O que cada arquivo do projeto faz](#8-o-que-cada-arquivo-do-projeto-faz)
-9. [Alternativa: instalação local (sem Docker)](#9-alternativa-instalação-local-sem-docker)
-10. [Próximos passos do projeto](#10-próximos-passos-do-projeto)
+3. [Conseguir a chave da API do Gemini](#3-conseguir-a-chave-da-api-do-gemini)
+4. [Configurar o arquivo .env](#4-configurar-o-arquivo-env)
+5. [Subir tudo com Docker](#5-subir-tudo-com-docker)
+6. [Testar no Telegram](#6-testar-no-telegram)
+7. [Comandos do dia a dia](#7-comandos-do-dia-a-dia)
+8. [Problemas comuns e como resolver](#8-problemas-comuns-e-como-resolver)
+9. [O que cada arquivo do projeto faz](#9-o-que-cada-arquivo-do-projeto-faz)
+10. [Alternativa: instalação local (sem Docker)](#10-alternativa-instalação-local-sem-docker)
+11. [Próximos passos do projeto](#11-próximos-passos-do-projeto)
 
 ---
 
 ## 1. O que você precisa ter instalado
 
-Só duas coisas na sua máquina. Você **não** precisa instalar Python, Postgres,
-Ollama ou Nanobot separadamente — tudo isso roda dentro dos containers.
+Só uma coisa na sua máquina. Você **não** precisa instalar Python, Postgres
+ou Nanobot separadamente — tudo isso roda dentro dos containers.
 
 ### Docker Desktop (Windows/Mac) ou Docker Engine (Linux)
 
@@ -48,18 +50,7 @@ docker --version
 docker compose version
 ```
 
-Você precisa ver duas linhas de versão, sem erro. A versão do Compose
-precisa ser **2.20.0 ou mais nova** (esse projeto usa um recurso do
-`depends_on` que só existe a partir dessa versão). Exemplo de saída esperada:
-
-```
-Docker version 27.3.1, build ce12230
-Docker Compose version v2.29.7
-```
-
-Se `docker compose version` der erro "command not found", você provavelmente
-tem o Docker Compose antigo (`docker-compose`, com hífen, versão 1.x) — nesse
-caso é melhor atualizar o Docker Desktop / Docker Engine.
+Você precisa ver duas linhas de versão, sem erro.
 
 ---
 
@@ -88,11 +79,28 @@ caso é melhor atualizar o Docker Desktop / Docker Engine.
 6. Copie a linha do token inteira (o formato é `números:letras_e_números`).
    Você vai colar isso no arquivo `.env` no próximo passo.
 
-Guarde esse token — é a única credencial que você precisa para este projeto.
+Guarde esse token.
 
 ---
 
-## 3. Configurar o arquivo .env
+## 3. Conseguir a chave da API do Gemini
+
+O Nanobot usa a API oficial do Google Gemini como modelo de linguagem.
+
+1. Acesse https://aistudio.google.com/api-keys e faça login com sua conta
+   Google.
+2. Clique em **Create API key** (o Google cria um projeto automaticamente).
+3. Copie a chave e cole no `.env` no próximo passo.
+
+Sobre custos: não pede cartão. O **free tier** cobre os modelos
+Flash/Flash-Lite com limites de requisições por minuto/dia (~10 req/min e
+~250–1.500 req/dia dependendo do modelo) — folgado para este projeto. Os
+modelos Pro são pagos. Tabela oficial:
+https://ai.google.dev/gemini-api/docs/pricing
+
+---
+
+## 4. Configurar o arquivo .env
 
 O projeto já vem com um arquivo chamado **`.env`** na raiz da pasta
 (`orcamento-conversacional/.env`). Ele é lido automaticamente pelo Docker
@@ -100,36 +108,19 @@ Compose — você não precisa renomear nada.
 
 **Atenção**: arquivos que começam com ponto (`.env`) são "ocultos" por
 padrão no Explorador de Arquivos do Windows, no Finder do Mac, e em `ls`
-sem flags no Linux/Mac. Se você extraiu o `.zip` e não está vendo o
-`.env`, ele provavelmente está lá mesmo assim — veja como mostrar arquivos
-ocultos:
+sem flags no Linux/Mac. Use `ls -la` para vê-lo no terminal, ou abra a
+pasta pelo editor de texto.
 
-- **Windows (Explorador de Arquivos)**: aba "Exibir" → marque "Itens ocultos".
-- **Mac (Finder)**: com o Finder aberto, pressione `Cmd + Shift + .` (ponto).
-- **Linux/Mac (terminal)**: use `ls -la` em vez de `ls`.
-
-Ou, mais simples: abra a pasta pelo terminal e edite direto por lá:
-
-```bash
-cd orcamento-conversacional
-nano .env
-```
-
-(`nano` é um editor de texto de terminal; salve com `Ctrl+O`, Enter, e saia
-com `Ctrl+X`. Se preferir, abra o arquivo com o VS Code: `code .env`, ou
-qualquer editor de texto comum.)
-
-Dentro do `.env`, troque esta linha:
+Dentro do `.env`, troque estas duas linhas pelos valores reais:
 
 ```
-TELEGRAM_TOKEN=coloque_seu_token_aqui
+TELEGRAM_TOKEN=coloque_seu_token_aqui      ← token do BotFather (seção 2)
+GEMINI_API_KEY=coloque_sua_chave_aqui      ← chave do AI Studio (seção 3)
 ```
 
-pelo token real que você copiou do BotFather, por exemplo:
-
-```
-TELEGRAM_TOKEN=7123456789:AAHxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-```
+A variável `GEMINI_MODEL` define qual modelo usar (padrão:
+`gemini-3.6-flash`). Só mexa se quiser trocar por outro ID válido da lista
+oficial: https://ai.google.dev/gemini-api/docs/models
 
 As outras variáveis (`POSTGRES_PASSWORD`, `DATABASE_URL`) já vêm com valores
 que funcionam — não precisa mexer nelas para rodar em Docker.
@@ -138,7 +129,7 @@ Salve o arquivo.
 
 ---
 
-## 4. Subir tudo com Docker
+## 5. Subir tudo com Docker
 
 Com o terminal aberto **dentro da pasta `orcamento-conversacional`** (a que
 tem o arquivo `docker-compose.yml`), rode:
@@ -151,19 +142,16 @@ O que esse comando faz, em ordem:
 
 | Etapa | O que acontece | Tempo aproximado |
 |---|---|---|
-| 1 | Baixa as imagens base (Postgres, Ollama) da internet | 1–3 min (primeira vez) |
-| 2 | Constrói (`--build`) as imagens do servidor MCP e do Nanobot | 1–2 min (primeira vez) |
+| 1 | Baixa as imagens base (Postgres) da internet | 1–3 min (primeira vez) |
+| 2 | Constrói (`--build`) a imagem do Nanobot (inclui o servidor MCP embutido) | 2–4 min (primeira vez) |
 | 3 | Sobe o Postgres e aplica o `schema.sql` automaticamente | poucos segundos |
-| 4 | Sobe o Ollama | poucos segundos |
-| 5 | Baixa o modelo `qwen2.5:3b` (container `ollama-pull`, descartável) | **3–8 min (primeira vez)**, é um download de ~2 GB |
-| 6 | Sobe o servidor MCP, esperando o Postgres ficar pronto | poucos segundos |
-| 7 | Sobe o Nanobot, esperando tudo acima estar pronto | poucos segundos |
+| 4 | Sobe o Nanobot, esperando o Postgres ficar pronto | poucos segundos |
 
-A flag `-d` ("detached") faz tudo rodar em segundo plano e devolve o
-controle do terminal para você. A primeira execução pode levar uns 10
-minutos no total, principalmente por causa do download do modelo. As
-próximas vezes que você rodar `docker compose up -d` (sem `--build`, porque
-as imagens já existem), sobe em segundos.
+Não há download nem execução de modelo na sua máquina: o Gemini roda na
+nuvem do Google.
+
+A flag `-d` ("detached") faz tudo rodar em segundo plano. As próximas vezes
+que você rodar `docker compose up -d` (sem `--build`), sobe em segundos.
 
 ### Como saber se deu tudo certo
 
@@ -173,45 +161,49 @@ Rode:
 docker compose ps
 ```
 
-Você deve ver uma tabela com 5 serviços (o `ollama-pull` aparece como
-"Exited (0)", o que é esperado — ele roda uma vez, baixa o modelo, e
-termina):
+Você deve ver 2 serviços:
 
 ```
 NAME                    IMAGE                    STATUS
 orcamento_postgres      postgres:16-alpine       Up (healthy)
-orcamento_ollama        ollama/ollama:latest     Up (healthy)
-orcamento_ollama_pull   ollama/ollama:latest     Exited (0)
-orcamento_mcp           ...mcp-orcamento         Up (healthy)
 orcamento_nanobot       ...nanobot               Up
 ```
 
-Se `orcamento_nanobot` aparecer como "Restarting" ou some da lista, veja a
-seção [Problemas comuns](#7-problemas-comuns-e-como-resolver) e rode:
+Confira também os logs do Nanobot — deve aparecer o MCP conectado:
 
 ```bash
 docker compose logs nanobot
 ```
 
-para ver o erro exato.
+Procure por linhas como:
+
+```
+MCP: registered tool 'mcp_orcamento_registrar_despesa' from server 'orcamento'
+MCP server 'orcamento': connected, 3 capabilities registered
+✓ Health endpoint: http://127.0.0.1:18790/health
+bot @seubot connected
+```
+
+Se o `orcamento_nanobot` aparecer como "Restarting" ou sumir da lista, veja
+a seção [Problemas comuns](#8-problemas-comuns-e-como-resolver).
 
 ---
 
-## 5. Testar no Telegram
+## 6. Testar no Telegram
 
 1. No Telegram, procure pelo username do bot que você criou no BotFather
    (ex: `@orcamento_seunome_bot`) e abra uma conversa com ele.
-2. Envie: `/start` (opcional, mas ajuda a confirmar que o bot está
-   respondendo).
+2. Envie `/start`. Na primeira conversa, o Nanobot pode pedir um **código de
+   pareamento** — ele aparece nos logs (`docker compose logs -f nanobot`,
+   linha "Generated pairing code ..."). Envie esse código para o bot.
 3. Envie algo como:
 
    ```
    Gastei 35 no almoço hoje
    ```
 
-4. Em alguns segundos (a primeira resposta é mais lenta, porque o modelo
-   local ainda está "esquentando"), o bot deve responder confirmando o
-   registro, algo como:
+4. Em alguns segundos, o bot deve responder confirmando o registro, algo
+   como:
 
    ```
    Registrado: R$ 35,00 em alimentação (almoço).
@@ -221,7 +213,7 @@ Se o bot não responder nada, veja a seção de problemas comuns abaixo.
 
 ---
 
-## 6. Comandos do dia a dia
+## 7. Comandos do dia a dia
 
 Todos rodados dentro da pasta `orcamento-conversacional`.
 
@@ -237,11 +229,6 @@ continuam rodando.)
 docker compose logs -f nanobot
 ```
 
-**Ver os logs só do servidor de tools (para depurar registro/consulta de despesas):**
-```bash
-docker compose logs -f mcp-orcamento
-```
-
 **Parar tudo (mantendo os dados salvos):**
 ```bash
 docker compose down
@@ -252,19 +239,20 @@ docker compose down
 docker compose up -d
 ```
 
-**Depois de editar `SOUL.md` ou `config.docker.json`** (não precisa
-reconstruir a imagem, são montados direto no container):
+**Depois de editar `SOUL.md`, `config.docker.json` ou o `.env`** (não
+precisa reconstruir a imagem; config e prompts são montados direto no
+container):
 ```bash
-docker compose restart nanobot
+docker compose up -d nanobot    # recria o container aplicando o novo .env
 ```
 
-**Depois de editar `mcp_server/expense_tools.py`** (precisa reconstruir,
-porque o código é copiado para dentro da imagem):
+**Depois de editar `mcp_server/expense_tools.py` ou `db/connection.py`**
+(precisa reconstruir, porque o venv do MCP é criado na imagem):
 ```bash
-docker compose up -d --build mcp-orcamento
+docker compose up -d --build nanobot
 ```
 
-**Apagar absolutamente tudo, inclusive os dados do banco e o modelo baixado**
+**Apagar absolutamente tudo, inclusive os dados do banco**
 (útil se algo ficou corrompido e você quer recomeçar do zero):
 ```bash
 docker compose down -v
@@ -282,150 +270,137 @@ Para sair do `psql`: digite `\q` e Enter.
 
 **Atalho opcional:** se você tem `make` instalado (padrão no Mac/Linux), o
 projeto inclui um `Makefile` com os comandos mais usados: `make up`,
-`make down`, `make logs`, `make restart`, `make ps`. É só conveniência —
-por baixo rodam exatamente os comandos `docker compose` documentados aqui.
+`make down`, `make logs`, `make restart`, `make ps`.
 
 ---
 
-## 7. Problemas comuns e como resolver
+## 8. Problemas comuns e como resolver
 
-### `docker compose up` reclama de "port is already allocated"
+### `Error: Environment variable 'GEMINI_API_KEY' referenced in config is not set`
 
-Alguma outra coisa na sua máquina já está usando a porta 5432 (Postgres) ou
-11434 (Ollama). Ou você já tem um Postgres/Ollama instalado localmente
-rodando. Duas opções:
-- Pare o serviço que está usando a porta, ou
-- Edite `docker-compose.yml` e troque, por exemplo, `"5432:5432"` para
-  `"5433:5432"` (a porta da esquerda é a que fica exposta na sua máquina).
+O `.env` não tem a variável `GEMINI_API_KEY` definida. Abra o `.env`,
+garanta que a linha existe (mesmo que com valor provisório) e rode
+`docker compose up -d nanobot` de novo.
 
-### `orcamento_nanobot` fica em "Restarting" ou cai
+### `401`, `unauthorized` ou `invalid api key` nos logs do Nanobot
 
-Rode `docker compose logs nanobot` e procure a última mensagem de erro.
-Causas mais comuns:
-- **`TELEGRAM_TOKEN` inválido ou ainda com o valor de exemplo**: confira o
-  `.env`, garanta que colou o token certo, sem espaços extras, e rode
-  `docker compose up -d --build nanobot` de novo.
-- **Erro de conexão com `mcp-orcamento` ou `ollama`**: rode
-  `docker compose ps` e confira se os dois estão "healthy". Se não
-  estiverem, veja os logs deles individualmente.
+A `GEMINI_API_KEY` está errada, revogada ou com espaço extra. Gere uma nova
+chave em https://aistudio.google.com/api-keys e atualize o `.env`.
+
+### `429` ou erros de rate limit / quota
+
+Você bateu no limite do free tier do Gemini (requisições por minuto ou por
+dia). Opções: aguardar alguns minutos, trocar `GEMINI_MODEL` no `.env` para
+um modelo Flash-Lite (limites maiores, ex: `gemini-3.1-flash-lite`) e subir
+de novo, ou habilitar billing na sua conta Google Cloud.
+
+### `model not found` nos logs
+
+O valor de `GEMINI_MODEL` não é um ID válido da Gemini API. Confira a lista
+oficial em https://ai.google.dev/gemini-api/docs/models e corrija o `.env`.
+
+### O bot não chama as tools / diz que não pode registrar
+
+Rode `docker compose logs nanobot` e procure por:
+- `MCP server 'orcamento': connected` — se não aparecer, houve falha ao
+  iniciar o servidor MCP embutido; veja erros logo acima dessa linha;
+- `Max iterations (...) reached` — significa que o modelo entrou em loop de
+  tool-calls; o limite configurável está em
+  `agents.defaults.maxToolIterations` do config.
 
 ### O bot não responde nada no Telegram
 
 - Confira `docker compose logs -f nanobot` enquanto manda uma mensagem —
   deve aparecer alguma atividade no log no mesmo instante.
-- Confira se o `orcamento_ollama_pull` realmente terminou com sucesso
-  (`docker compose ps` deve mostrar "Exited (0)", não "Exited (1)" ou
-  parecido). Se o download do modelo falhou, rode:
-  ```bash
-  docker compose up ollama-pull
-  ```
-  para tentar de novo.
+- Verifique se você completou o pareamento (seção 6, passo 2).
 
 ### `docker compose version` diz "unknown flag" ou não existe
 
-Você tem o Docker Compose antigo (v1, com hífen: `docker-compose`). Este
-projeto usa um recurso (`service_completed_successfully` no `depends_on`)
-que exige a v2.20+. Atualize o Docker Desktop, ou instale o plugin
-`docker-compose-plugin` separadamente (Linux).
-
-### O download do modelo (`ollama-pull`) está muito lento ou trava
-
-É um download de ~2 GB direto dos servidores do Ollama — depende da sua
-internet. Pode acompanhar o progresso com:
-```bash
-docker compose logs -f ollama-pull
-```
-Se travar de vez, `docker compose up ollama-pull` tenta de novo sem refazer
-o que já foi baixado (o volume `orcamento_ollama_models` persiste).
-
-### Quero trocar o modelo (usar um Qwen maior, por exemplo)
-
-Edite duas coisas:
-1. `docker-compose.yml`, no serviço `ollama-pull`, troque `qwen2.5:3b` pelo
-   nome do modelo desejado (confira nomes válidos em
-   https://ollama.com/library).
-2. `nanobot_config/config.docker.json`, no campo `modelPresets.local.model`,
-   troque para o mesmo nome.
-
-Depois: `docker compose up -d --build`.
+Você tem o Docker Compose antigo (v1, com hífen: `docker-compose`). Atualize
+o Docker Desktop, ou instale o plugin `docker-compose-plugin` separadamente
+(Linux).
 
 ---
 
-## 8. O que cada arquivo do projeto faz
+## 9. O que cada arquivo do projeto faz
 
 ```
 orcamento-conversacional/
-├── .env                         # SUAS credenciais (token do Telegram, senha do banco).
-│                                  Lido automaticamente pelo docker compose.
+├── .env                         # SUAS credenciais (token do Telegram, chave
+│                                #   do Gemini, senha do banco). Lido
+│                                #   automaticamente pelo docker compose.
 ├── .env.example                 # Modelo de referência do .env, sem credenciais reais.
-├── docker-compose.yml           # Define os containers (postgres, ollama, ollama-pull,
-│                                  mcp-orcamento, nanobot), como eles se conectam entre si,
-│                                  e a ordem de inicialização.
+├── docker-compose.yml           # Define os containers (postgres, nanobot) e
+│                                #   a ordem de inicialização.
 ├── Makefile                     # Atalhos opcionais (make up, make logs, etc).
 ├── requirements.txt             # Dependências Python do servidor MCP (mcp, psycopg2-binary).
 │
 ├── db/
-│   ├── schema.sql                # Cria as tabelas usuarios, categorias, despesas.
-│   │                              Aplicado automaticamente na 1ª subida do Postgres.
-│   └── connection.py             # Código Python que conecta no Postgres (pool de conexões)
-│                                  e resolve o usuário do Telegram para um id interno.
+│   ├── schema.sql               # Cria as tabelas usuarios, categorias, despesas.
+│   │                            #   Aplicado automaticamente na 1ª subida do Postgres.
+│   └── connection.py            # Código Python que conecta no Postgres (pool de conexões)
+│                                #   e resolve o usuário do Telegram para um id interno.
 │
 ├── mcp_server/
-│   ├── expense_tools.py          # As "ferramentas" que o agente de IA usa:
-│   │                              registrar_despesa, listar_despesas, resumo_por_categoria.
-│   │                              Roda em modo HTTP dentro do Docker.
-│   └── Dockerfile                # Como construir a imagem desse servidor.
+│   ├── expense_tools.py         # As "ferramentas" que o agente de IA usa:
+│   │                            #   registrar_despesa, listar_despesas, resumo_por_categoria.
+│   │                            #   Roda via stdio DENTRO do container do Nanobot.
+│   └── Dockerfile               # Imagem standalone opcional do MCP server (modo HTTP).
 │
 └── nanobot_config/
-    ├── config.json                # Config do Nanobot para rodar FORA do Docker
-    │                              (instalação local — ver seção 9).
-    ├── config.docker.json         # Config do Nanobot para rodar DENTRO do Docker —
-    │                              é este que está ativo quando você usa `docker compose up`.
-    ├── Dockerfile                 # Como construir a imagem do Nanobot.
-    ├── SOUL.md                    # As instruções que dizem ao agente COMO se comportar:
-    │                              como extrair valor/categoria/data de uma mensagem,
-    │                              quando pedir confirmação, o que ele NÃO deve fazer ainda.
-    ├── AGENTS.md                  # Regras gerais de comportamento (idioma, uso de tools,
-    │                              tratamento de erro). Complementa o SOUL.md.
-    └── USER.md                    # Perfil do usuário — começa vazio, o Nanobot vai
-                                    preenchendo automaticamente com o tempo.
+    ├── config.json              # Config do Nanobot para rodar FORA do Docker
+    │                            #   (instalação local — ver seção 10). MCP via stdio
+    │                            #   relativo à raiz do projeto.
+    ├── config.docker.json       # Config do Nanobot para rodar DENTRO do Docker —
+    │                            #   é este que está ativo quando você usa `docker compose up`.
+    │                            #   MCP via stdio em /opt/mcpvenv (venv isolado).
+    ├── Dockerfile               # Como construir a imagem do Nanobot. Instala o
+    │                            #   nanobot + um venv isolado (/opt/mcpvenv) com as
+    │                            #   dependências do servidor MCP.
+    ├── SOUL.md                  # As instruções que dizem ao agente COMO se comportar:
+    │                            #   como extrair valor/categoria/data de uma mensagem,
+    │                            #   quando pedir confirmação, o que ele NÃO deve fazer ainda.
+    ├── AGENTS.md                # Regras gerais de comportamento (idioma, uso de tools,
+    │                            #   tratamento de erro). Complementa o SOUL.md.
+    └── USER.md                  # Perfil do usuário — começa vazio, o Nanobot vai
+                                  preenchendo automaticamente com o tempo.
 ```
+
+### Detalhes da arquitetura atual
+
+- **Modelo de linguagem**: Google Gemini via API oficial
+  (`providers.gemini`). O modelo é escolhido pela variável `GEMINI_MODEL`
+  no `.env` (padrão: `gemini-3.6-flash`). Nada roda de modelo local.
+- **Servidor MCP**: roda como subprocesso (stdio) dentro do próprio
+  container do Nanobot, usando o venv isolado `/opt/mcpvenv`. Por que
+  isolado? O SDK Python `mcp` 2.x usado pelas tools conflita com a versão
+  (`mcp>=1.26,<2`) exigida pelo próprio nanobot.
+- **Proteção contra loops**: `agents.defaults.maxToolIterations: 6` limita
+  quantas chamadas de tool seguidas o agente pode fazer num mesmo turno.
 
 ### Por que existem dois arquivos de config do Nanobot?
 
-`config.json` (para rodar localmente, fora do Docker) aponta para
-`localhost` e usa o servidor MCP via *stdio* (um subprocesso Python direto).
-`config.docker.json` (usado dentro do Docker) aponta para os nomes dos
-containers (`ollama`, `mcp-orcamento`) e usa o servidor MCP via *HTTP*,
-porque dentro do Docker cada serviço é um processo isolado que só conversa
-com os outros pela rede interna do Compose — não dá para chamar um
-subprocesso de dentro de outro container.
+`config.json` (para rodar localmente, fora do Docker) aponta o MCP server
+via *stdio* relativo à raiz do projeto. `config.docker.json` (usado dentro
+do Docker) usa caminhos absolutos do container (`/opt/mcp_server/...`) e o
+venv `/opt/mcpvenv/bin/python3`.
 
 ---
 
-## 9. Alternativa: instalação local (sem Docker)
+## 10. Alternativa: instalação local (sem Docker)
 
-Se você preferir rodar Postgres/Ollama/Nanobot direto na sua máquina em vez
-de em containers (mais chato de configurar, mas mais fácil de depurar linha
-por linha):
+Se você preferir rodar Postgres/Nanobot direto na sua máquina em vez de em
+containers (mais chato de configurar, mas mais fácil de depurar linha por
+linha):
 
-### 9.1. Subir só o Postgres em Docker
+### 10.1. Subir só o Postgres em Docker
 
 ```bash
 docker compose up -d postgres
 ```
-(Isso sobe *só* o Postgres — não o Ollama, nem o Nanobot, nem o MCP server.
-O `schema.sql` é aplicado automaticamente.)
+(Isso sobe *só* o Postgres. O `schema.sql` é aplicado automaticamente.)
 
-### 9.2. Instalar o Ollama e baixar o modelo
-
-```bash
-# instale o Ollama: https://docs.ollama.com/
-ollama pull qwen2.5:3b
-ollama serve   # se não estiver rodando como serviço
-```
-
-### 9.3. Instalar as dependências Python do servidor MCP
+### 10.2. Instalar as dependências Python do servidor MCP
 
 ```bash
 python3 -m venv .venv
@@ -438,12 +413,13 @@ Exporte as variáveis de ambiente no mesmo terminal:
 ```bash
 export DATABASE_URL=postgresql://orcamento:orcamento@localhost:5432/orcamento
 export TELEGRAM_TOKEN=seu_token_aqui
+export GEMINI_API_KEY=sua_chave_aqui
+export GEMINI_MODEL=gemini-3.6-flash
 ```
 
-(No Windows PowerShell, use `$env:DATABASE_URL = "..."` e
-`$env:TELEGRAM_TOKEN = "..."`.)
+(No Windows PowerShell, use `$env:DATABASE_URL = "..."`, etc.)
 
-### 9.4. Instalar e rodar o Nanobot
+### 10.3. Instalar e rodar o Nanobot
 
 ```bash
 pip install -U nanobot-ai
@@ -468,7 +444,7 @@ nanobot agent -c nanobot_config/config.json -m "Paguei 120 no mercado no cartão
 
 ---
 
-## 10. Próximos passos do projeto
+## 11. Próximos passos do projeto
 
 1. Testar o fluxo ponta a ponta com mensagens reais e ajustar o `SOUL.md`
    conforme os erros de extração observados (linguagem informal,
@@ -477,19 +453,17 @@ nanobot agent -c nanobot_config/config.json -m "Paguei 120 no mercado no cartão
    evolução de despesas).
 3. Implementar a camada de recomendações: consolidar os dados de
    `resumo_por_categoria` e enviar para uma LLM avançada via API.
+4. Vincular automaticamente as despesas ao usuário do Telegram autenticado
+   (hoje o `telegram_id` é passado pelo modelo ao chamar a tool).
 
 ---
 
 ## Aviso sobre validação
 
-Não tenho um daemon Docker disponível no ambiente onde gerei este projeto,
-então não consegui rodar `docker compose up` de ponta a ponta e ver os
-containers subindo de verdade. O que validei diretamente:
-- Sintaxe do `docker-compose.yml` (YAML válido, parseado com sucesso).
-- O servidor MCP em modo HTTP: subi localmente e confirmei que responde
-  `200 OK` no endpoint `/mcp`.
-- Os arquivos `config.json` e `config.docker.json` são JSON válido.
+O pipeline foi validado em execução real com Docker: containers subindo,
+MCP conectado via stdio com as 3 tools registradas, e inserções no Postgres
+confirmadas via `psql`. A sintaxe do `docker-compose.yml` e dos JSONs de
+config é verificada antes de cada subida.
 
 Se algo travar exatamente no `docker compose up`, comece pela seção
-[7. Problemas comuns](#7-problemas-comuns-e-como-resolver) — o candidato
-mais provável é a versão do Docker Compose (precisa ser 2.20+).
+[8. Problemas comuns](#8-problemas-comuns-e-como-resolver).
