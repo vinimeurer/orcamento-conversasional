@@ -1,0 +1,54 @@
+@startuml
+
+autonumber
+
+actor "Usuario" as U
+participant "Telegram" as T
+participant "Nanobot" as N
+participant "Gemini LLM" as G
+participant "MCP Server" as M
+database "PostgreSQL" as DB
+
+U -> T : Envia mensagem
+T -> N : Entrega mensagem
+
+N -> G : Envia mensagem + ferramentas disponíveis
+
+note over G
+Gemini interpreta a intenção
+e decide qual ferramenta utilizar
+end note
+
+alt Registrar despesa
+
+    G --> N : Tool Call: registrar_despesa(...)
+    N -> M : Chama registrar_despesa via MCP
+    M -> DB : INSERT
+    DB --> M : Despesa registrada
+    M --> N : Tool Result
+
+else Listar despesas
+
+    G --> N : Tool Call: listar_despesas(...)
+    N -> M : Chama listar_despesas via MCP
+    M -> DB : SELECT
+    DB --> M : Lista de despesas
+    M --> N : Tool Result
+
+else Resumo por categoria
+
+    G --> N : Tool Call: resumo_por_categoria(...)
+    N -> M : Chama resumo_por_categoria via MCP
+    M -> DB : SELECT + agregação
+    DB --> M : Resumo por categoria
+    M --> N : Tool Result
+
+end
+
+N -> G : Envia resultado da ferramenta
+G --> N : Gera resposta em linguagem natural
+
+N -> T : Envia resposta
+T -> U : Exibe resposta
+
+@enduml
