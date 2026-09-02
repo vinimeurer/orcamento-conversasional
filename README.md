@@ -260,17 +260,26 @@ docker compose down -v
 
 **Entrar no banco de dados para ver as despesas registradas manualmente:**
 ```bash
-docker exec -it orcamento_postgres psql -U orcamento -d orcamento
+make view-db
 ```
+(ou o comando completo: `docker exec -it orcamento_postgres psql -U orcamento -d orcamento`)
+
 Dentro do `psql`, experimente:
 ```sql
-SELECT * FROM despesas ORDER BY criado_em DESC LIMIT 10;
-```
-Para sair do `psql`: digite `\q` e Enter.
+\dt              -- lista as tabelas
+\d despesas      -- estrutura da tabela despesas
 
-**Atalho opcional:** se você tem `make` instalado (padrão no Mac/Linux), o
-projeto inclui um `Makefile` com os comandos mais usados: `make up`,
-`make down`, `make logs`, `make restart`, `make ps`.
+SELECT * FROM usuarios;
+SELECT * FROM despesas;
+SELECT * FROM categorias;
+SELECT * FROM despesas ORDER BY criado_em DESC LIMIT 20;
+
+\q               -- sai do psql
+```
+
+**Outros atalhos do Makefile** (`make` instalado por padrão no Mac/Linux):
+`make up`, `make down`, `make logs`, `make restart`, `make ps`,
+`make build`, `make reset`, `make view-db`.
 
 ---
 

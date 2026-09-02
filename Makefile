@@ -4,7 +4,7 @@
 # documentados em texto puro no README.md, caso você prefira digitá-los
 # na mão ou não tenha `make` instalado.
 
-.PHONY: up down restart logs ps build reset clean
+.PHONY: up down restart logs ps build reset clean view-db
 
 up:
 	docker compose up -d --build
@@ -29,3 +29,6 @@ reset:
 	docker compose down -v
 
 clean: reset
+
+view-db:
+	docker exec -it orcamento_postgres psql -U orcamento -d orcamento
