@@ -4,7 +4,7 @@
 # documentados em texto puro no README.md, caso você prefira digitá-los
 # na mão ou não tenha `make` instalado.
 
-.PHONY: up down restart logs ps build pull-model reset clean
+.PHONY: up down restart logs ps build reset clean
 
 up:
 	docker compose up -d --build
@@ -23,9 +23,6 @@ ps:
 
 build:
 	docker compose build
-
-pull-model:
-	docker compose run --rm ollama-pull
 
 # Remove containers e volumes (APAGA os dados do Postgres e o modelo baixado)
 reset:
