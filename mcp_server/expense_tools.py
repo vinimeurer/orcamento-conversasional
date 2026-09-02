@@ -1,12 +1,30 @@
 import datetime
 import sys
-from pathlib import Path
+import io
+import os
+import tempfile
+import matplotlib
+import matplotlib.pyplot as plt
+import requests
+
+from datetime import timedelta
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import cm
+from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from mcp.server import MCPServer
 
+from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+matplotlib.use("Agg")  # backend sem display, necessário em container
+
 from db.connection import get_cursor, get_or_create_usuario
+
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 
 server = MCPServer(
     name="orcamento-despesas",
@@ -207,6 +225,314 @@ def resumo_por_categoria(
             for linha in linhas
         ],
     }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+###################################################################
+
+def _periodo_anterior(data_inicio: str, data_fim: str) -> tuple[str, str]:
+    """
+    Calcula o período imediatamente anterior, com a mesma duração do
+    período informado, para permitir comparação (RF28-RF30).
+    """
+    inicio = datetime.date.fromisoformat(data_inicio)
+    fim = datetime.date.fromisoformat(data_fim)
+    duracao = (fim - inicio).days + 1
+    novo_fim = inicio - timedelta(days=1)
+    novo_inicio = novo_fim - timedelta(days=duracao - 1)
+    return novo_inicio.isoformat(), novo_fim.isoformat()
+
+
+def _resumo_categoria_periodo(usuario_id: int, data_inicio: str, data_fim: str) -> list[dict]:
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT c.nome AS categoria, SUM(d.valor) AS total
+            FROM despesas d
+            JOIN categorias c ON c.id = d.categoria_id
+            WHERE d.usuario_id = %s AND d.data_despesa BETWEEN %s AND %s
+            GROUP BY c.nome
+            ORDER BY total DESC
+            """,
+            (usuario_id, data_inicio, data_fim),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def _evolucao_diaria(usuario_id: int, data_inicio: str, data_fim: str) -> list[dict]:
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT data_despesa, SUM(valor) AS total
+            FROM despesas
+            WHERE usuario_id = %s AND data_despesa BETWEEN %s AND %s
+            GROUP BY data_despesa
+            ORDER BY data_despesa
+            """,
+            (usuario_id, data_inicio, data_fim),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def _grafico_pizza_categoria(resumo: list[dict]) -> io.BytesIO:
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.pie(
+        [r["total"] for r in resumo],
+        labels=[r["categoria"] for r in resumo],
+        autopct="%1.1f%%",
+        startangle=90,
+    )
+    ax.set_title("Distribuição de gastos por categoria")
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return buf
+
+
+def _grafico_evolucao_diaria(evolucao: list[dict]) -> io.BytesIO:
+    fig, ax = plt.subplots(figsize=(10, 4))
+    dias = [e["data_despesa"].strftime("%d/%m") for e in evolucao]
+    valores = [float(e["total"]) for e in evolucao]
+    ax.bar(dias, valores, color="#4C72B0")
+    ax.set_title("Evolução diária de gastos")
+    ax.set_ylabel("R$")
+    plt.xticks(rotation=90, fontsize=6)
+    fig.tight_layout()
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return buf
+
+
+def _montar_pdf(
+    caminho: str,
+    data_inicio: str,
+    data_fim: str,
+    total_atual: float,
+    total_anterior: float,
+    resumo_categoria: list[dict],
+    evolucao: list[dict],
+    maior_despesa: dict | None,
+    categoria_destaque: str | None,
+) -> None:
+    doc = SimpleDocTemplate(caminho, pagesize=A4, topMargin=1.5 * cm, bottomMargin=1.5 * cm)
+    styles = getSampleStyleSheet()
+    titulo = ParagraphStyle("titulo", parent=styles["Title"], fontSize=18)
+    subtitulo = styles["Heading2"]
+    corpo = styles["BodyText"]
+
+    variacao_pct = None
+    if total_anterior > 0:
+        variacao_pct = round((total_atual - total_anterior) / total_anterior * 100, 1)
+
+    elementos = [
+        Paragraph("Relatório de Gastos", titulo),
+        Paragraph(f"Período: {data_inicio} a {data_fim}", corpo),
+        Spacer(1, 0.4 * cm),
+    ]
+
+    resumo_txt = f"<b>Total gasto:</b> R$ {total_atual:.2f}"
+    if variacao_pct is not None:
+        resumo_txt += f" &nbsp;&nbsp; <b>Variação vs. período anterior:</b> {variacao_pct:+.1f}%"
+    elementos.append(Paragraph(resumo_txt, corpo))
+
+    if maior_despesa:
+        elementos.append(Paragraph(
+            f"<b>Maior despesa do período:</b> R$ {maior_despesa['valor']:.2f} "
+            f"— {maior_despesa['descricao']} ({maior_despesa['data_despesa']})",
+            corpo,
+        ))
+    if categoria_destaque:
+        elementos.append(Paragraph(f"<b>Destaque:</b> {categoria_destaque}", corpo))
+
+    elementos.append(Spacer(1, 0.5 * cm))
+
+    if resumo_categoria:
+        elementos.append(Paragraph("Distribuição por categoria", subtitulo))
+        elementos.append(Image(_grafico_pizza_categoria(resumo_categoria), width=14 * cm, height=8.4 * cm))
+        elementos.append(Spacer(1, 0.3 * cm))
+
+    if evolucao:
+        elementos.append(Paragraph("Evolução diária", subtitulo))
+        elementos.append(Image(_grafico_evolucao_diaria(evolucao), width=16 * cm, height=6.4 * cm))
+        elementos.append(Spacer(1, 0.5 * cm))
+
+    if resumo_categoria:
+        elementos.append(Paragraph("Detalhamento por categoria", subtitulo))
+        dados = [["Categoria", "Total (R$)"]]
+        for r in resumo_categoria:
+            dados.append([r["categoria"], f'{r["total"]:.2f}'])
+        tabela = Table(dados, colWidths=[9 * cm, 5 * cm])
+        tabela.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4C72B0")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ]))
+        elementos.append(tabela)
+
+    doc.build(elementos)
+
+
+def _enviar_pdf_telegram(telegram_id: int, caminho: str, legenda: str) -> bool:
+    """
+    Envia o PDF diretamente pela API do Telegram (sendDocument), sem
+    depender do Nanobot interpretar um artefato retornado pelo MCP.
+
+    Nota de arquitetura: isso acopla esta tool ao canal Telegram
+    especificamente (RNF45 previa desacoplamento entre agente e
+    ferramentas). Foi uma escolha deliberada — a alternativa (devolver o
+    PDF como recurso MCP e confiar que o Nanobot repassa como anexo) não
+    tem suporte documentado/testado no framework para o tipo "resource"
+    do MCP. Se isso mudar em uma versão futura do Nanobot, esta função
+    pode ser removida e a tool pode voltar a apenas retornar o arquivo.
+    """
+    if not TELEGRAM_TOKEN:
+        return False
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
+    try:
+        with open(caminho, "rb") as f:
+            resp = requests.post(
+                url,
+                data={"chat_id": telegram_id, "caption": legenda},
+                files={"document": (os.path.basename(caminho), f, "application/pdf")},
+                timeout=30,
+            )
+        return resp.ok
+    except requests.RequestException:
+        # Falha de rede/timeout não pode derrubar a tool inteira — o
+        # chamador trata isso como "não foi possível enviar" e informa
+        # o usuário de forma controlada.
+        return False
+
+
+@server.tool()
+def gerar_relatorio_pdf(
+    telegram_id: int,
+    data_inicio: str,
+    data_fim: str,
+) -> dict:
+    """
+    Gera um relatório de gastos em PDF, com gráficos de distribuição por
+    categoria e evolução diária, comparação com o período anterior e
+    detalhamento por categoria. Envia o PDF diretamente para o usuário
+    no Telegram.
+
+    IMPORTANTE: data_inicio e data_fim são obrigatórios. Se o usuário
+    pedir um relatório sem informar um período, pergunte o período antes
+    de chamar esta ferramenta — nunca assuma um período por conta própria.
+
+    Args:
+        telegram_id: id numérico do usuário no Telegram.
+        data_inicio: data inicial no formato YYYY-MM-DD, inclusiva.
+        data_fim: data final no formato YYYY-MM-DD, inclusiva.
+    """
+    usuario_id = get_or_create_usuario(telegram_id)
+
+    resumo_categoria = _resumo_categoria_periodo(usuario_id, data_inicio, data_fim)
+    evolucao = _evolucao_diaria(usuario_id, data_inicio, data_fim)
+    total_atual = sum(float(r["total"]) for r in resumo_categoria)
+
+    if not resumo_categoria:
+        return {
+            "sucesso": False,
+            "erro": "Não há despesas registradas nesse período para gerar o relatório.",
+        }
+
+    data_inicio_ant, data_fim_ant = _periodo_anterior(data_inicio, data_fim)
+    resumo_anterior = _resumo_categoria_periodo(usuario_id, data_inicio_ant, data_fim_ant)
+    total_anterior = sum(float(r["total"]) for r in resumo_anterior)
+
+    # despesa individual de maior valor, e categoria com maior alta em
+    # relação ao período anterior — usados nos "destaques" do relatório
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT valor, descricao, data_despesa
+            FROM despesas
+            WHERE usuario_id = %s AND data_despesa BETWEEN %s AND %s
+            ORDER BY valor DESC LIMIT 1
+            """,
+            (usuario_id, data_inicio, data_fim),
+        )
+        maior_despesa = cur.fetchone()
+        maior_despesa = dict(maior_despesa) if maior_despesa else None
+
+    anterior_por_categoria = {r["categoria"]: float(r["total"]) for r in resumo_anterior}
+    categoria_destaque = None
+    maior_alta_pct = 0.0
+    for r in resumo_categoria:
+        cat = r["categoria"]
+        atual = float(r["total"])
+        antes = anterior_por_categoria.get(cat, 0.0)
+        if antes > 0:
+            variacao = (atual - antes) / antes * 100
+            if variacao > maior_alta_pct:
+                maior_alta_pct = variacao
+                categoria_destaque = (
+                    f"Gastos com {cat} subiram {variacao:.0f}% em relação ao período anterior."
+                )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        caminho_pdf = os.path.join(tmp, f"relatorio_{data_inicio}_a_{data_fim}.pdf")
+        _montar_pdf(
+            caminho_pdf,
+            data_inicio,
+            data_fim,
+            total_atual,
+            total_anterior,
+            resumo_categoria,
+            evolucao,
+            maior_despesa,
+            categoria_destaque,
+        )
+
+        legenda = f"Relatório de gastos: {data_inicio} a {data_fim}"
+        enviado = _enviar_pdf_telegram(telegram_id, caminho_pdf, legenda)
+
+    if not enviado:
+        return {
+            "sucesso": False,
+            "erro": "O relatório foi gerado, mas não foi possível enviá-lo pelo Telegram.",
+        }
+
+    return {
+        "sucesso": True,
+        "total_gasto": round(total_atual, 2),
+        "periodo": {"inicio": data_inicio, "fim": data_fim},
+    }
+
+
+
+
+###################################################################
+
+
+
+
+
+
+
+
+
+
 
 
 if __name__ == "__main__":
