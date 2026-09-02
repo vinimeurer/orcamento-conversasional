@@ -8,10 +8,6 @@ import matplotlib.pyplot as plt
 import requests
 
 from datetime import timedelta
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import cm
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from mcp.server import MCPServer
@@ -23,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 matplotlib.use("Agg")  # backend sem display, necessário em container
 
 from db.connection import get_cursor, get_or_create_usuario
+from pdf_builder import montar_pdf
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 
@@ -226,25 +223,6 @@ def resumo_por_categoria(
         ],
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-###################################################################
-
 def _periodo_anterior(data_inicio: str, data_fim: str) -> tuple[str, str]:
     """
     Calcula o período imediatamente anterior, com a mesma duração do
@@ -319,76 +297,6 @@ def _grafico_evolucao_diaria(evolucao: list[dict]) -> io.BytesIO:
     plt.close(fig)
     buf.seek(0)
     return buf
-
-
-def _montar_pdf(
-    caminho: str,
-    data_inicio: str,
-    data_fim: str,
-    total_atual: float,
-    total_anterior: float,
-    resumo_categoria: list[dict],
-    evolucao: list[dict],
-    maior_despesa: dict | None,
-    categoria_destaque: str | None,
-) -> None:
-    doc = SimpleDocTemplate(caminho, pagesize=A4, topMargin=1.5 * cm, bottomMargin=1.5 * cm)
-    styles = getSampleStyleSheet()
-    titulo = ParagraphStyle("titulo", parent=styles["Title"], fontSize=18)
-    subtitulo = styles["Heading2"]
-    corpo = styles["BodyText"]
-
-    variacao_pct = None
-    if total_anterior > 0:
-        variacao_pct = round((total_atual - total_anterior) / total_anterior * 100, 1)
-
-    elementos = [
-        Paragraph("Relatório de Gastos", titulo),
-        Paragraph(f"Período: {data_inicio} a {data_fim}", corpo),
-        Spacer(1, 0.4 * cm),
-    ]
-
-    resumo_txt = f"<b>Total gasto:</b> R$ {total_atual:.2f}"
-    if variacao_pct is not None:
-        resumo_txt += f" &nbsp;&nbsp; <b>Variação vs. período anterior:</b> {variacao_pct:+.1f}%"
-    elementos.append(Paragraph(resumo_txt, corpo))
-
-    if maior_despesa:
-        elementos.append(Paragraph(
-            f"<b>Maior despesa do período:</b> R$ {maior_despesa['valor']:.2f} "
-            f"— {maior_despesa['descricao']} ({maior_despesa['data_despesa']})",
-            corpo,
-        ))
-    if categoria_destaque:
-        elementos.append(Paragraph(f"<b>Destaque:</b> {categoria_destaque}", corpo))
-
-    elementos.append(Spacer(1, 0.5 * cm))
-
-    if resumo_categoria:
-        elementos.append(Paragraph("Distribuição por categoria", subtitulo))
-        elementos.append(Image(_grafico_pizza_categoria(resumo_categoria), width=14 * cm, height=8.4 * cm))
-        elementos.append(Spacer(1, 0.3 * cm))
-
-    if evolucao:
-        elementos.append(Paragraph("Evolução diária", subtitulo))
-        elementos.append(Image(_grafico_evolucao_diaria(evolucao), width=16 * cm, height=6.4 * cm))
-        elementos.append(Spacer(1, 0.5 * cm))
-
-    if resumo_categoria:
-        elementos.append(Paragraph("Detalhamento por categoria", subtitulo))
-        dados = [["Categoria", "Total (R$)"]]
-        for r in resumo_categoria:
-            dados.append([r["categoria"], f'{r["total"]:.2f}'])
-        tabela = Table(dados, colWidths=[9 * cm, 5 * cm])
-        tabela.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4C72B0")),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-            ("FONTSIZE", (0, 0), (-1, -1), 9),
-        ]))
-        elementos.append(tabela)
-
-    doc.build(elementos)
 
 
 def _enviar_pdf_telegram(telegram_id: int, caminho: str, legenda: str) -> bool:
@@ -494,7 +402,7 @@ def gerar_relatorio_pdf(
 
     with tempfile.TemporaryDirectory() as tmp:
         caminho_pdf = os.path.join(tmp, f"relatorio_{data_inicio}_a_{data_fim}.pdf")
-        _montar_pdf(
+        montar_pdf(
             caminho_pdf,
             data_inicio,
             data_fim,
@@ -525,22 +433,6 @@ def gerar_relatorio_pdf(
         "total_gasto": round(total_atual, 2),
         "periodo": {"inicio": data_inicio, "fim": data_fim},
     }
-
-
-
-
-###################################################################
-
-
-
-
-
-
-
-
-
-
-
 
 if __name__ == "__main__":
     import os
