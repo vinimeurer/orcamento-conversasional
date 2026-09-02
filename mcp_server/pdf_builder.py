@@ -2,29 +2,47 @@
 Módulo de montagem do PDF do relatório de gastos.
 
 Usa o chart_builder para os gráficos e monta o layout final: cabeçalho de
-marca, cards de KPI, seções com gráficos, tabela de detalhamento e rodapé
-com paginação — tudo com a paleta definida em chart_builder.
+marca, cards de KPI, distribuição por categoria, evolução diária,
+detalhamento por categoria, detalhamento por dia e rodapé com paginação —
+tudo com a paleta definida em chart_builder.
+
+Este relatório cobre um único período por vez (sem comparação com períodos
+anteriores) — é uma foto do mês/período consultado, não uma análise de
+tendência.
 """
 import functools
+from collections import defaultdict
 
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.platypus import (
-    Flowable, Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
+    Flowable, Image, KeepTogether, Paragraph, SimpleDocTemplate, Spacer,
+    Table, TableStyle,
 )
 
 from chart_builder import (
-    COR_FUNDO_CARD, COR_NEGATIVO, COR_POSITIVO, COR_PRIMARIA,
-    COR_PRIMARIA_CLARA, COR_TEXTO, COR_TEXTO_SECUNDARIO,
-    grafico_comparacao_periodos, grafico_distribuicao_categoria,
+    COR_FUNDO_CARD, COR_PRIMARIA, COR_PRIMARIA_CLARA, COR_TEXTO,
+    COR_TEXTO_SECUNDARIO, grafico_distribuicao_categoria,
     grafico_evolucao_diaria, _cor_categoria, nome_categoria,
 )
 
-LARGURA_PAGINA, ALTURA_PAGINA = A4
 MARGEM = 2 * cm
 ALTURA_FAIXA_TOPO = 2.9 * cm
+
+DIAS_SEMANA = [
+    "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira",
+    "Sexta-feira", "Sábado", "Domingo",
+]
+
+
+def _dia_semana_pt(data) -> str:
+    return DIAS_SEMANA[data.weekday()]
+
+
+def _moeda(v: float) -> str:
+    return f"R$ {v:,.2f}".replace(",", ".")
 
 
 # ---------------------------------------------------------------------------
@@ -41,6 +59,18 @@ class CardKPI(Flowable):
         self.subtitulo = subtitulo
         self.cor = cor
 
+    @staticmethod
+    def _fonte_ajustada(c, texto, fonte, tamanho_max, largura_disponivel, tamanho_min=7):
+        """
+        Reduz o tamanho da fonte até o texto caber em largura_disponivel,
+        pra não depender de adivinhar quantos caracteres cabem em cada
+        card (que muda conforme o número de cards na linha).
+        """
+        tamanho = tamanho_max
+        while tamanho > tamanho_min and c.stringWidth(texto, fonte, tamanho) > largura_disponivel:
+            tamanho -= 0.5
+        return tamanho
+
     def draw(self):
         c = self.canv
         c.setFillColor(colors.HexColor(COR_FUNDO_CARD))
@@ -48,21 +78,26 @@ class CardKPI(Flowable):
 
         c.setFillColor(colors.HexColor(self.cor))
         c.roundRect(0, self.height - 5, self.width, 5, radius=2.5, fill=1, stroke=0)
-        # cobre os cantos de baixo do topo pra não ficarem arredondados
         c.rect(0, self.height - 5, self.width, 2.5, fill=1, stroke=0)
 
         pad = 0.4 * cm
-        c.setFillColor(colors.HexColor(COR_TEXTO_SECUNDARIO))
-        c.setFont("Helvetica", 9.5)
-        c.drawString(pad, self.height - 1.0 * cm, self.titulo.upper())
+        largura_disponivel = self.width - 2 * pad
 
+        titulo = self.titulo.upper()
+        tam_titulo = self._fonte_ajustada(c, titulo, "Helvetica", 9.5, largura_disponivel)
+        c.setFillColor(colors.HexColor(COR_TEXTO_SECUNDARIO))
+        c.setFont("Helvetica", tam_titulo)
+        c.drawString(pad, self.height - 1.0 * cm, titulo)
+
+        tam_valor = self._fonte_ajustada(c, self.valor, "Helvetica-Bold", 16, largura_disponivel)
         c.setFillColor(colors.HexColor(COR_TEXTO))
-        c.setFont("Helvetica-Bold", 16)
+        c.setFont("Helvetica-Bold", tam_valor)
         c.drawString(pad, self.height - 1.75 * cm, self.valor)
 
         if self.subtitulo:
+            tam_sub = self._fonte_ajustada(c, self.subtitulo, "Helvetica-Bold", 9.5, largura_disponivel)
             c.setFillColor(colors.HexColor(self.cor))
-            c.setFont("Helvetica-Bold", 9.5)
+            c.setFont("Helvetica-Bold", tam_sub)
             c.drawString(pad, pad, self.subtitulo)
 
 
@@ -71,15 +106,13 @@ def _linha_cards(cards: list[CardKPI], largura_total: float) -> Table:
     largura_card = (largura_total - gap * (len(cards) - 1)) / len(cards)
     for card in cards:
         card.width = largura_card
-    linha = [cards]
-    tabela = Table(linha, colWidths=[largura_card] * len(cards))
+    tabela = Table([cards], colWidths=[largura_card] * len(cards))
     tabela.setStyle(TableStyle([
         ("LEFTPADDING", (0, 0), (-1, -1), 0),
         ("RIGHTPADDING", (0, 0), (-1, -1), gap),
         ("TOPPADDING", (0, 0), (-1, -1), 0),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
     ]))
-    tabela._argW[len(cards) - 1] = largura_card  # última coluna sem gap à direita
     return tabela
 
 
@@ -89,18 +122,18 @@ def _linha_cards(cards: list[CardKPI], largura_total: float) -> Table:
 
 def _cabecalho_rodape(canv, doc, data_inicio: str, data_fim: str):
     canv.saveState()
+    largura, altura = doc.pagesize
 
     canv.setFillColor(colors.HexColor(COR_PRIMARIA))
-    canv.rect(0, ALTURA_PAGINA - ALTURA_FAIXA_TOPO, LARGURA_PAGINA, ALTURA_FAIXA_TOPO,
-               fill=1, stroke=0)
+    canv.rect(0, altura - ALTURA_FAIXA_TOPO, largura, ALTURA_FAIXA_TOPO, fill=1, stroke=0)
 
     canv.setFillColor(colors.white)
     canv.setFont("Helvetica-Bold", 20)
-    canv.drawString(MARGEM, ALTURA_PAGINA - 1.5 * cm, "Relatório de Gastos")
+    canv.drawString(MARGEM, altura - 1.5 * cm, "Relatório de Gastos")
 
     canv.setFont("Helvetica", 11)
     canv.setFillColor(colors.HexColor(COR_PRIMARIA_CLARA))
-    canv.drawString(MARGEM, ALTURA_PAGINA - 2.15 * cm,
+    canv.drawString(MARGEM, altura - 2.15 * cm,
                      f"Período de {data_inicio} a {data_fim}  ·  Orçamento Conversacional")
 
     canv.setFillColor(colors.HexColor(COR_TEXTO_SECUNDARIO))
@@ -108,9 +141,31 @@ def _cabecalho_rodape(canv, doc, data_inicio: str, data_fim: str):
     canv.drawString(MARGEM, 1 * cm,
                      "Relatório gerado automaticamente. Tem caráter informativo — "
                      "não constitui aconselhamento financeiro profissional.")
-    canv.drawRightString(LARGURA_PAGINA - MARGEM, 1 * cm, f"Página {doc.page}")
+    canv.drawRightString(largura - MARGEM, 1 * cm, f"Página {doc.page}")
 
     canv.restoreState()
+
+
+# ---------------------------------------------------------------------------
+# Agrupamentos
+# ---------------------------------------------------------------------------
+
+def _agrupar_por_categoria(despesas: list[dict], ordem: list[str]) -> list[tuple[str, list[dict]]]:
+    grupos = defaultdict(list)
+    for d in despesas:
+        grupos[d["categoria"]].append(d)
+    for itens in grupos.values():
+        itens.sort(key=lambda d: d["data_despesa"])  # crescente
+    return [(cat, grupos[cat]) for cat in ordem if cat in grupos]
+
+
+def _agrupar_por_dia(despesas: list[dict]) -> list[tuple[object, list[dict]]]:
+    grupos = defaultdict(list)
+    for d in despesas:
+        grupos[d["data_despesa"]].append(d)
+    for itens in grupos.values():
+        itens.sort(key=lambda d: -float(d["valor"]))  # maior primeiro
+    return [(dia, grupos[dia]) for dia in sorted(grupos.keys())]
 
 
 # ---------------------------------------------------------------------------
@@ -122,16 +177,26 @@ def montar_pdf(
     data_inicio: str,
     data_fim: str,
     total_atual: float,
-    total_anterior: float,
     resumo_categoria: list[dict],
     evolucao: list[dict],
+    despesas: list[dict],
     maior_despesa: dict | None,
-    categoria_destaque: str | None,
+    orientacao: str = "vertical",
 ) -> None:
-    largura_util = LARGURA_PAGINA - 2 * MARGEM
+    """
+    Relatório de gastos de um único período (sem comparação com períodos
+    anteriores — este relatório existe só para ver os gastos do próprio
+    mês/período consultado).
+
+    orientacao: "vertical" (retrato, padrão — recomendado) ou "horizontal"
+    (paisagem). Ver justificativa da escolha no README/comentário do addon.
+    """
+    pagesize = A4 if orientacao == "vertical" else landscape(A4)
+    largura_pagina = pagesize[0]
+    largura_util = largura_pagina - 2 * MARGEM
 
     doc = SimpleDocTemplate(
-        caminho, pagesize=A4,
+        caminho, pagesize=pagesize,
         topMargin=ALTURA_FAIXA_TOPO + 0.8 * cm,
         bottomMargin=1.6 * cm,
         leftMargin=MARGEM, rightMargin=MARGEM,
@@ -145,48 +210,36 @@ def montar_pdf(
         "destaque", fontName="Helvetica", fontSize=10.5, textColor=colors.HexColor(COR_TEXTO_SECUNDARIO),
         leading=15,
     )
-
-    variacao_pct = None
-    if total_anterior > 0:
-        variacao_pct = round((total_atual - total_anterior) / total_anterior * 100, 1)
+    estilo_grupo_header = ParagraphStyle(
+        "grupo_header", fontName="Helvetica-Bold", fontSize=11, textColor=colors.HexColor(COR_TEXTO),
+        spaceBefore=10, spaceAfter=3,
+    )
+    estilo_item = ParagraphStyle(
+        "item", fontName="Helvetica", fontSize=9.5, textColor=colors.HexColor(COR_TEXTO_SECUNDARIO),
+        leftIndent=0.5 * cm, spaceAfter=2, leading=13,
+    )
 
     categoria_top = resumo_categoria[0] if resumo_categoria else None
-    n_despesas_txt = f"{len(evolucao)} dia(s) com gasto" if evolucao else "—"
-
-    cor_variacao = COR_POSITIVO
-    variacao_txt = "—"
-    if variacao_pct is not None:
-        cor_variacao = COR_NEGATIVO if variacao_pct > 0 else COR_POSITIVO
-        variacao_txt = f"{variacao_pct:+.1f}%"
+    media_diaria = total_atual / len(evolucao) if evolucao else 0.0
 
     cards = [
-        CardKPI(0, 2.6 * cm, "Total gasto", f"R$ {total_atual:,.2f}".replace(",", "."),
-                cor=COR_PRIMARIA),
-        CardKPI(0, 2.6 * cm, "Vs. período anterior", variacao_txt,
-                subtitulo="mais alto" if (variacao_pct or 0) > 0 else "mais baixo",
-                cor=cor_variacao),
+        CardKPI(0, 2.6 * cm, "Total gasto", _moeda(total_atual), cor=COR_PRIMARIA),
         CardKPI(0, 2.6 * cm, "Categoria principal",
                 nome_categoria(categoria_top["categoria"]) if categoria_top else "—",
-                subtitulo=(f'R$ {categoria_top["total"]:,.2f}'.replace(",", ".")
-                           if categoria_top else None),
+                subtitulo=(_moeda(float(categoria_top["total"])) if categoria_top else None),
                 cor=_cor_categoria(categoria_top["categoria"]) if categoria_top else COR_PRIMARIA),
+        CardKPI(0, 2.6 * cm, "Média diária", _moeda(media_diaria), cor=COR_PRIMARIA),
+        CardKPI(0, 2.6 * cm, "Registros", str(len(despesas)), cor=COR_PRIMARIA),
     ]
 
-    elementos = [
-        _linha_cards(cards, largura_util),
-        Spacer(1, 0.7 * cm),
-    ]
+    elementos = [_linha_cards(cards, largura_util), Spacer(1, 0.7 * cm)]
 
-    destaques = []
     if maior_despesa:
-        destaques.append(
-            f"<b>Maior despesa:</b> R$ {float(maior_despesa['valor']):,.2f} — "
-            f"{maior_despesa['descricao']} ({maior_despesa['data_despesa']})".replace(",", ".")
-        )
-    if categoria_destaque:
-        destaques.append(f"<b>Destaque:</b> {categoria_destaque}")
-    if destaques:
-        elementos.append(Paragraph("  &nbsp;&nbsp;|&nbsp;&nbsp;  ".join(destaques), estilo_destaque))
+        elementos.append(Paragraph(
+            f"<b>Maior despesa do período:</b> {_moeda(float(maior_despesa['valor']))} — "
+            f"{maior_despesa['descricao']} ({maior_despesa['data_despesa']})",
+            estilo_destaque,
+        ))
         elementos.append(Spacer(1, 0.6 * cm))
 
     if resumo_categoria:
@@ -205,34 +258,53 @@ def montar_pdf(
         ))
         elementos.append(Spacer(1, 0.5 * cm))
 
-    if total_anterior > 0:
-        elementos.append(Paragraph("Comparação com o período anterior", estilo_secao))
-        elementos.append(Image(
-            grafico_comparacao_periodos(total_atual, total_anterior, "Este período", "Período anterior"),
-            width=largura_util, height=largura_util * 0.16,
-        ))
-        elementos.append(Spacer(1, 0.5 * cm))
-
-    if resumo_categoria:
+    # -----------------------------------------------------------------
+    # Detalhamento por categoria (categorias em ordem decrescente de valor;
+    # dentro de cada categoria, registros em ordem crescente de data)
+    # -----------------------------------------------------------------
+    if despesas and resumo_categoria:
         elementos.append(Paragraph("Detalhamento por categoria", estilo_secao))
-        dados = [["", "Categoria", "Total (R$)"]]
-        for r in resumo_categoria:
-            dados.append(["●", nome_categoria(r["categoria"]), f'{float(r["total"]):,.2f}'.replace(",", ".")])
-        tabela = Table(dados, colWidths=[0.7 * cm, largura_util - 0.7 * cm - 3.5 * cm, 3.5 * cm])
-        estilo_tabela = [
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(COR_PRIMARIA)),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, -1), 10),
-            ("LINEBELOW", (0, 1), (-1, -1), 0.5, colors.HexColor("#E5E7EB")),
-            ("TOPPADDING", (0, 0), (-1, -1), 7),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
-            ("ALIGN", (2, 0), (2, -1), "RIGHT"),
-        ]
-        for i, r in enumerate(resumo_categoria, start=1):
-            estilo_tabela.append(("TEXTCOLOR", (0, i), (0, i), colors.HexColor(_cor_categoria(r["categoria"]))))
-        tabela.setStyle(TableStyle(estilo_tabela))
-        elementos.append(tabela)
+        ordem_categorias = [r["categoria"] for r in resumo_categoria]
+        for categoria, itens in _agrupar_por_categoria(despesas, ordem_categorias):
+            total_cat = sum(float(d["valor"]) for d in itens)
+            cor = _cor_categoria(categoria)
+            bloco = [Paragraph(
+                f'<font color="{cor}">●</font> <b>{nome_categoria(categoria)}</b>'
+                f'&nbsp;&nbsp;<font color="{COR_TEXTO_SECUNDARIO}">{_moeda(total_cat)}'
+                f' · {len(itens)} registro(s)</font>',
+                estilo_grupo_header,
+            )]
+            for d in itens:
+                bloco.append(Paragraph(
+                    f'{d["data_despesa"].strftime("%d/%m")} — {d["descricao"]} — '
+                    f'{_moeda(float(d["valor"]))}',
+                    estilo_item,
+                ))
+            elementos.append(KeepTogether(bloco))
+
+    # -----------------------------------------------------------------
+    # Detalhamento por dia (dias em ordem crescente; dentro de cada dia,
+    # registros do maior para o menor valor)
+    # -----------------------------------------------------------------
+    if despesas:
+        elementos.append(Spacer(1, 0.4 * cm))
+        elementos.append(Paragraph("Detalhamento por dia", estilo_secao))
+        for dia, itens in _agrupar_por_dia(despesas):
+            total_dia = sum(float(d["valor"]) for d in itens)
+            bloco = [Paragraph(
+                f'<b>{dia.strftime("%d/%m/%Y")}</b> — {_dia_semana_pt(dia)}'
+                f'&nbsp;&nbsp;<font color="{COR_TEXTO_SECUNDARIO}">{_moeda(total_dia)}'
+                f' · {len(itens)} registro(s)</font>',
+                estilo_grupo_header,
+            )]
+            for d in itens:
+                cor = _cor_categoria(d["categoria"])
+                bloco.append(Paragraph(
+                    f'<font color="{cor}">●</font> {d["descricao"]} '
+                    f'({nome_categoria(d["categoria"])}) — {_moeda(float(d["valor"]))}',
+                    estilo_item,
+                ))
+            elementos.append(KeepTogether(bloco))
 
     doc.build(
         elementos,

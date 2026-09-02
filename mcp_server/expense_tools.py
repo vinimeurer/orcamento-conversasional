@@ -1,22 +1,14 @@
 import datetime
 import sys
-import io
 import os
 import tempfile
-import matplotlib
-import matplotlib.pyplot as plt
 import requests
-
-from datetime import timedelta
-from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from mcp.server import MCPServer
 
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-matplotlib.use("Agg")  # backend sem display, necessário em container
 
 from db.connection import get_cursor, get_or_create_usuario
 from pdf_builder import montar_pdf
@@ -223,19 +215,6 @@ def resumo_por_categoria(
         ],
     }
 
-def _periodo_anterior(data_inicio: str, data_fim: str) -> tuple[str, str]:
-    """
-    Calcula o período imediatamente anterior, com a mesma duração do
-    período informado, para permitir comparação (RF28-RF30).
-    """
-    inicio = datetime.date.fromisoformat(data_inicio)
-    fim = datetime.date.fromisoformat(data_fim)
-    duracao = (fim - inicio).days + 1
-    novo_fim = inicio - timedelta(days=1)
-    novo_inicio = novo_fim - timedelta(days=duracao - 1)
-    return novo_inicio.isoformat(), novo_fim.isoformat()
-
-
 def _resumo_categoria_periodo(usuario_id: int, data_inicio: str, data_fim: str) -> list[dict]:
     with get_cursor() as cur:
         cur.execute(
@@ -267,36 +246,23 @@ def _evolucao_diaria(usuario_id: int, data_inicio: str, data_fim: str) -> list[d
         return [dict(r) for r in cur.fetchall()]
 
 
-def _grafico_pizza_categoria(resumo: list[dict]) -> io.BytesIO:
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.pie(
-        [float(r["total"]) for r in resumo],
-        labels=[r["categoria"] for r in resumo],
-        autopct="%1.1f%%",
-        startangle=90,
-    )
-    ax.set_title("Distribuição de gastos por categoria")
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    buf.seek(0)
-    return buf
-
-
-def _grafico_evolucao_diaria(evolucao: list[dict]) -> io.BytesIO:
-    fig, ax = plt.subplots(figsize=(10, 4))
-    dias = [e["data_despesa"].strftime("%d/%m") for e in evolucao]
-    valores = [float(e["total"]) for e in evolucao]
-    ax.bar(dias, valores, color="#4C72B0")
-    ax.set_title("Evolução diária de gastos")
-    ax.set_ylabel("R$")
-    plt.xticks(rotation=90, fontsize=6)
-    fig.tight_layout()
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    buf.seek(0)
-    return buf
+def _despesas_periodo(usuario_id: int, data_inicio: str, data_fim: str) -> list[dict]:
+    """
+    Busca as despesas individuais do período (não agregadas), usadas nos
+    detalhamentos por categoria e por dia do relatório em PDF.
+    """
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT d.valor, d.descricao, c.nome AS categoria, d.data_despesa
+            FROM despesas d
+            JOIN categorias c ON c.id = d.categoria_id
+            WHERE d.usuario_id = %s AND d.data_despesa BETWEEN %s AND %s
+            ORDER BY d.data_despesa ASC
+            """,
+            (usuario_id, data_inicio, data_fim),
+        )
+        return [dict(r) for r in cur.fetchall()]
 
 
 def _enviar_pdf_telegram(telegram_id: int, caminho: str, legenda: str) -> bool:
@@ -340,10 +306,11 @@ def gerar_relatorio_pdf(
     data_fim: str,
 ) -> dict:
     """
-    Gera um relatório de gastos em PDF, com gráficos de distribuição por
-    categoria e evolução diária, comparação com o período anterior e
-    detalhamento por categoria. Envia o PDF diretamente para o usuário
-    no Telegram.
+    Gera um relatório de gastos de um único período em PDF, com gráficos de
+    distribuição por categoria, evolução diária, e detalhamento por
+    categoria e por dia. Não faz comparação com períodos anteriores — é uma
+    visão fechada do período consultado (ex: os gastos do mês). Envia o
+    PDF diretamente para o usuário no Telegram.
 
     IMPORTANTE: data_inicio e data_fim são obrigatórios. Se o usuário
     pedir um relatório sem informar um período, pergunte o período antes
@@ -358,6 +325,7 @@ def gerar_relatorio_pdf(
 
     resumo_categoria = _resumo_categoria_periodo(usuario_id, data_inicio, data_fim)
     evolucao = _evolucao_diaria(usuario_id, data_inicio, data_fim)
+    despesas = _despesas_periodo(usuario_id, data_inicio, data_fim)
     total_atual = sum(float(r["total"]) for r in resumo_categoria)
 
     if not resumo_categoria:
@@ -366,12 +334,8 @@ def gerar_relatorio_pdf(
             "erro": "Não há despesas registradas nesse período para gerar o relatório.",
         }
 
-    data_inicio_ant, data_fim_ant = _periodo_anterior(data_inicio, data_fim)
-    resumo_anterior = _resumo_categoria_periodo(usuario_id, data_inicio_ant, data_fim_ant)
-    total_anterior = sum(float(r["total"]) for r in resumo_anterior)
-
-    # despesa individual de maior valor, e categoria com maior alta em
-    # relação ao período anterior — usados nos "destaques" do relatório
+    # despesa individual de maior valor no período — usada no "destaque" do relatório
+    
     with get_cursor() as cur:
         cur.execute(
             """
@@ -385,21 +349,6 @@ def gerar_relatorio_pdf(
         maior_despesa = cur.fetchone()
         maior_despesa = dict(maior_despesa) if maior_despesa else None
 
-    anterior_por_categoria = {r["categoria"]: float(r["total"]) for r in resumo_anterior}
-    categoria_destaque = None
-    maior_alta_pct = 0.0
-    for r in resumo_categoria:
-        cat = r["categoria"]
-        atual = float(r["total"])
-        antes = anterior_por_categoria.get(cat, 0.0)
-        if antes > 0:
-            variacao = (atual - antes) / antes * 100
-            if variacao > maior_alta_pct:
-                maior_alta_pct = variacao
-                categoria_destaque = (
-                    f"Gastos com {cat} subiram {variacao:.0f}% em relação ao período anterior."
-                )
-
     with tempfile.TemporaryDirectory() as tmp:
         caminho_pdf = os.path.join(tmp, f"relatorio_{data_inicio}_a_{data_fim}.pdf")
         montar_pdf(
@@ -407,11 +356,10 @@ def gerar_relatorio_pdf(
             data_inicio,
             data_fim,
             total_atual,
-            total_anterior,
             resumo_categoria,
             evolucao,
+            despesas,
             maior_despesa,
-            categoria_destaque,
         )
 
         legenda = f"Relatório de gastos: {data_inicio} a {data_fim}"

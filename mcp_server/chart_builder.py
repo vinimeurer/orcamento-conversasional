@@ -10,6 +10,7 @@ import io
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
 import matplotlib.font_manager as fm
 from matplotlib.patches import FancyBboxPatch
 
@@ -135,8 +136,8 @@ def grafico_distribuicao_categoria(resumo: list[dict], total: float) -> io.Bytes
 
 def grafico_evolucao_diaria(evolucao: list[dict]) -> io.BytesIO:
     """
-    Barras diárias com linha de média tracejada, eixos limpos (sem moldura),
-    e rótulo apenas em alguns dias para não poluir quando o período é longo.
+    Barras diárias com linha de média tracejada e eixo Y em reais (grade
+    horizontal leve para leitura, sem moldura ao redor do gráfico).
     """
     _aplicar_estilo()
     dias = [e["data_despesa"] for e in evolucao]
@@ -146,53 +147,25 @@ def grafico_evolucao_diaria(evolucao: list[dict]) -> io.BytesIO:
     fig, ax = plt.subplots(figsize=(11, 4.2))
     x = range(len(dias))
     ax.bar(x, valores, color=COR_PRIMARIA, width=0.65, zorder=3)
+    ax.grid(axis="y", color=COR_GRADE, linewidth=0.7, zorder=0)
 
     ax.axhline(media, color=COR_TEXTO_SECUNDARIO, linestyle="--", linewidth=1, zorder=2)
     ax.text(len(x) - 0.5, media, f"  média: R$ {media:,.2f}".replace(",", "."),
             va="center", fontsize=9.5, color=COR_TEXTO_SECUNDARIO)
 
-    # rótulo do eixo x: mostra no máximo ~12 datas, pra não empilhar texto
     passo = max(1, len(dias) // 12)
     ax.set_xticks(list(x)[::passo])
     ax.set_xticklabels([d.strftime("%d/%m") for d in dias[::passo]], fontsize=9)
+
+    ax.yaxis.set_major_formatter(
+        FuncFormatter(lambda v, _: f"R$ {v:,.0f}".replace(",", "."))
+    )
+    ax.tick_params(axis="y", labelsize=9)
 
     for spine in ("top", "right", "left"):
         ax.spines[spine].set_visible(False)
     ax.spines["bottom"].set_color(COR_GRADE)
     ax.tick_params(left=False)
-    ax.set_yticks([])
     ax.set_ylim(0, max(valores) * 1.25 if valores else 1)
-
-    return _salvar(fig)
-
-
-def grafico_comparacao_periodos(total_atual: float, total_anterior: float,
-                                 rotulo_atual: str, rotulo_anterior: str) -> io.BytesIO:
-    """
-    Duas barras horizontais simples comparando o período atual com o
-    anterior — um reforço visual direto do número de variação percentual
-    que já aparece em texto no topo do relatório.
-    """
-    _aplicar_estilo()
-    fig, ax = plt.subplots(figsize=(11, 1.8))
-
-    cor_atual = COR_NEGATIVO if total_atual > total_anterior else COR_POSITIVO
-    categorias = [rotulo_anterior, rotulo_atual]
-    valores = [total_anterior, total_atual]
-    cores = [COR_TEXTO_SECUNDARIO, cor_atual]
-
-    barras = ax.barh(categorias, valores, color=cores, height=0.55, zorder=3)
-    maior = max(valores) if max(valores) > 0 else 1
-    for barra, valor in zip(barras, valores):
-        ax.text(valor + maior * 0.02, barra.get_y() + barra.get_height() / 2,
-                f"R$ {valor:,.2f}".replace(",", "."),
-                va="center", fontsize=10, color=COR_TEXTO)
-
-    ax.set_xlim(0, maior * 1.35)
-    ax.invert_yaxis()
-    for spine in ax.spines.values():
-        spine.set_visible(False)
-    ax.set_xticks([])
-    ax.tick_params(left=False)
 
     return _salvar(fig)
