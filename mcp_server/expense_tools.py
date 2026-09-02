@@ -292,7 +292,7 @@ def _evolucao_diaria(usuario_id: int, data_inicio: str, data_fim: str) -> list[d
 def _grafico_pizza_categoria(resumo: list[dict]) -> io.BytesIO:
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.pie(
-        [r["total"] for r in resumo],
+        [float(r["total"]) for r in resumo],
         labels=[r["categoria"] for r in resumo],
         autopct="%1.1f%%",
         startangle=90,
@@ -405,7 +405,7 @@ def _enviar_pdf_telegram(telegram_id: int, caminho: str, legenda: str) -> bool:
     pode ser removida e a tool pode voltar a apenas retornar o arquivo.
     """
     if not TELEGRAM_TOKEN:
-        return False
+        return False, "TELEGRAM_TOKEN não está definido no ambiente do servidor MCP."
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
     try:
         with open(caminho, "rb") as f:
@@ -415,12 +415,14 @@ def _enviar_pdf_telegram(telegram_id: int, caminho: str, legenda: str) -> bool:
                 files={"document": (os.path.basename(caminho), f, "application/pdf")},
                 timeout=30,
             )
-        return resp.ok
-    except requests.RequestException:
+        if resp.ok:
+            return True, None
+        return False, f"Telegram respondeu {resp.status_code}: {resp.text[:300]}"
+    except requests.RequestException as exc:
         # Falha de rede/timeout não pode derrubar a tool inteira — o
         # chamador trata isso como "não foi possível enviar" e informa
         # o usuário de forma controlada.
-        return False
+        return False, f"Erro de rede ao chamar a API do Telegram: {exc}"
 
 
 @server.tool()
@@ -505,12 +507,17 @@ def gerar_relatorio_pdf(
         )
 
         legenda = f"Relatório de gastos: {data_inicio} a {data_fim}"
-        enviado = _enviar_pdf_telegram(telegram_id, caminho_pdf, legenda)
+        enviado, motivo_falha = _enviar_pdf_telegram(telegram_id, caminho_pdf, legenda)
 
     if not enviado:
+        # O motivo detalhado fica em "detalhe_tecnico" (não em "erro") de
+        # propósito: assim o SOUL.md pode instruir o agente a nunca repetir
+        # esse texto técnico pro usuário (RNF11), mas ele ainda aparece no
+        # log de "Tool call" do Nanobot pra você diagnosticar.
         return {
             "sucesso": False,
             "erro": "O relatório foi gerado, mas não foi possível enviá-lo pelo Telegram.",
+            "detalhe_tecnico": motivo_falha,
         }
 
     return {
