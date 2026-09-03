@@ -11,9 +11,23 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from db.connection import get_cursor, get_or_create_usuario
-from pdf_builder import montar_pdf
+from dashboard_builder import montar_dashboard_pdf
+from dash_style import nome_categoria
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+
+MESES_PT = [
+    "", "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+    "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+]
+
+
+def _titulo_periodo(data_inicio: str, data_fim: str) -> str:
+    di = datetime.date.fromisoformat(data_inicio)
+    df = datetime.date.fromisoformat(data_fim)
+    if di.year == df.year and di.month == df.month:
+        return f"{MESES_PT[di.month].upper()} / {di.year}"
+    return f"{di.strftime('%d/%m/%Y')} A {df.strftime('%d/%m/%Y')}"
 
 server = MCPServer(
     name="orcamento-despesas",
@@ -306,11 +320,12 @@ def gerar_relatorio_pdf(
     data_fim: str,
 ) -> dict:
     """
-    Gera um relatório de gastos de um único período em PDF, com gráficos de
-    distribuição por categoria, evolução diária, e detalhamento por
-    categoria e por dia. Não faz comparação com períodos anteriores — é uma
-    visão fechada do período consultado (ex: os gastos do mês). Envia o
-    PDF diretamente para o usuário no Telegram.
+    Gera um dashboard-resumo dos gastos de um único período em PDF (uma
+    página): KPIs principais, gastos por categoria, composição, evolução
+    diária e principais gastos. Não faz comparação com períodos anteriores
+    nem detalhamento registro a registro — é um resumo visual rápido do
+    período (ex: os gastos do mês). Envia o PDF diretamente para o usuário
+    no Telegram.
 
     IMPORTANTE: data_inicio e data_fim são obrigatórios. Se o usuário
     pedir um relatório sem informar um período, pergunte o período antes
@@ -334,32 +349,63 @@ def gerar_relatorio_pdf(
             "erro": "Não há despesas registradas nesse período para gerar o relatório.",
         }
 
-    # despesa individual de maior valor no período — usada no "destaque" do relatório
-    
-    with get_cursor() as cur:
-        cur.execute(
-            """
-            SELECT valor, descricao, data_despesa
-            FROM despesas
-            WHERE usuario_id = %s AND data_despesa BETWEEN %s AND %s
-            ORDER BY valor DESC LIMIT 1
-            """,
-            (usuario_id, data_inicio, data_fim),
+    n_lancamentos = len(despesas)
+    gasto_medio = total_atual / n_lancamentos if n_lancamentos else 0.0
+    despesas_top = sorted(despesas, key=lambda d: -float(d["valor"]))[:5]
+    maior_despesa = despesas_top[0] if despesas_top else None
+
+    categoria_top = resumo_categoria[0]
+    pct_top = float(categoria_top["total"]) / total_atual * 100 if total_atual else 0
+    insights = [
+        dict(
+            icone="pie",
+            texto=(
+                f"{nome_categoria(categoria_top['categoria'])} foi sua maior categoria de "
+                f"gasto, representando {pct_top:.0f}% do total."
+            ),
         )
-        maior_despesa = cur.fetchone()
-        maior_despesa = dict(maior_despesa) if maior_despesa else None
+    ]
+
+    top_dias = sorted(evolucao, key=lambda e: -float(e["total"]))[:3]
+    if top_dias:
+        dias_fmt = [d["data_despesa"].strftime("%d/%m") for d in
+                    sorted(top_dias, key=lambda e: e["data_despesa"])]
+        dias_txt = ", ".join(dias_fmt[:-1]) + (" e " + dias_fmt[-1] if len(dias_fmt) > 1 else dias_fmt[0])
+        insights.append(dict(icone="calendar", texto=f"Os dias com maiores gastos foram {dias_txt}."))
+
+    if len(resumo_categoria) >= 2:
+        c1, c2 = resumo_categoria[0], resumo_categoria[1]
+        soma_pct = (float(c1["total"]) + float(c2["total"])) / total_atual * 100 if total_atual else 0
+        insights.append(dict(
+            icone="star",
+            texto=(
+                f"Fique de olho nos gastos com {nome_categoria(c1['categoria'])} e "
+                f"{nome_categoria(c2['categoria'])}, que juntos somam {soma_pct:.0f}% do total."
+            ),
+        ))
+    else:
+        insights.append(dict(
+            icone="star",
+            texto="Continue acompanhando seus gastos regularmente para manter o controle do orçamento.",
+        ))
 
     with tempfile.TemporaryDirectory() as tmp:
         caminho_pdf = os.path.join(tmp, f"relatorio_{data_inicio}_a_{data_fim}.pdf")
-        montar_pdf(
+        montar_dashboard_pdf(
             caminho_pdf,
+            _titulo_periodo(data_inicio, data_fim),
             data_inicio,
             data_fim,
             total_atual,
+            n_lancamentos,
+            gasto_medio,
             resumo_categoria,
             evolucao,
-            despesas,
+            despesas_top,
             maior_despesa,
+            insights,
+            "revisar seus gastos regularmente é o primeiro passo para conquistar seus objetivos financeiros.",
+            datetime.date.today().strftime("%d/%m/%Y"),
         )
 
         legenda = f"Relatório de gastos: {data_inicio} a {data_fim}"
