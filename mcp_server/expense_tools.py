@@ -373,19 +373,16 @@ def gerar_relatorio_pdf(
         dias_txt = ", ".join(dias_fmt[:-1]) + (" e " + dias_fmt[-1] if len(dias_fmt) > 1 else dias_fmt[0])
         insights.append(dict(icone="calendar", texto=f"Os dias com maiores gastos foram {dias_txt}."))
 
-    if len(resumo_categoria) >= 2:
-        c1, c2 = resumo_categoria[0], resumo_categoria[1]
-        soma_pct = (float(c1["total"]) + float(c2["total"])) / total_atual * 100 if total_atual else 0
+    if resumo_categoria:
+        n_top3 = min(3, len(resumo_categoria))
+        top3_pct = sum(float(r["total"]) for r in resumo_categoria[:n_top3]) / total_atual * 100 if total_atual else 0
         insights.append(dict(
-            icone="star",
-            texto=(
-                f"Fique de olho nos gastos com {nome_categoria(c1['categoria'])} e "
-                f"{nome_categoria(c2['categoria'])}, que juntos somam {soma_pct:.0f}% do total."
-            ),
+            icone="pie",
+            texto=f"As {n_top3} maiores categorias representam {top3_pct:.0f}% do total gasto.",
         ))
     else:
         insights.append(dict(
-            icone="star",
+            icone="pie",
             texto="Continue acompanhando seus gastos regularmente para manter o controle do orçamento.",
         ))
 

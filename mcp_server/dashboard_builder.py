@@ -25,6 +25,7 @@ MARGEM = 1.3 * cm
 LARGURA_UTIL = LARGURA - 2 * MARGEM
 CARD_PAD = 0.45 * cm
 GAP = 0.3 * cm
+GAP_ANTES_RESUMO = 0.5 * cm  # um pouco mais de respiro antes do "EM RESUMO"
 
 MESES_PT = [
     "", "JANEIRO", "FEVEREIRO", "MARÇO", "ABRIL", "MAIO", "JUNHO",
@@ -55,6 +56,32 @@ def _texto_centralizado(c, x, y, texto, fonte, tamanho, cor):
     c.setFillColor(colors.HexColor(cor))
     c.setFont(fonte, tamanho)
     c.drawCentredString(x, y, texto)
+
+
+def _truncar_com_reticencias(c, texto, fonte, tamanho, largura_max):
+    """Trunca 'texto' e adiciona '...' se ele não couber em largura_max, na
+    fonte/tamanho dados. Usado em todo lugar onde um texto de tamanho
+    variável (descrição de despesa, nome de categoria etc.) poderia
+    sobrescrever outro elemento ao lado."""
+    if c.stringWidth(texto, fonte, tamanho) <= largura_max:
+        return texto
+    reticencias = "..."
+    txt = texto
+    while txt and c.stringWidth(txt + reticencias, fonte, tamanho) > largura_max:
+        txt = txt[:-1]
+    return (txt + reticencias) if txt else reticencias
+
+
+def _texto_ajustado(c, texto, fonte, tamanho_max, largura_disponivel, tamanho_min=7):
+    """Reduz a fonte até tamanho_min tentando caber o texto; se mesmo no
+    tamanho mínimo ainda não couber, trunca com reticências nesse tamanho.
+    Retorna (texto_final, tamanho_final)."""
+    tamanho = tamanho_max
+    while tamanho > tamanho_min and c.stringWidth(texto, fonte, tamanho) > largura_disponivel:
+        tamanho -= 0.5
+    if c.stringWidth(texto, fonte, tamanho) > largura_disponivel:
+        texto = _truncar_com_reticencias(c, texto, fonte, tamanho, largura_disponivel)
+    return texto, tamanho
 
 
 def _desenhar_moldura_card(c, x, y_topo, largura, altura):
@@ -118,16 +145,12 @@ def _desenhar_kpi_card(c, x, y, largura, altura, icone, label, valor, subtitulo,
 
     _texto_centralizado(c, cx, y + altura - 1.35 * cm, label.upper(), "Helvetica", 7.3, COR_TEXTO_SECUNDARIO)
 
-    tam_valor = 14
-    while tam_valor > 8 and c.stringWidth(valor, "Helvetica-Bold", tam_valor) > largura - 0.3 * cm:
-        tam_valor -= 0.5
-    _texto_centralizado(c, cx, y + altura - 1.95 * cm, valor, "Helvetica-Bold", tam_valor, cor_valor)
+    valor_final, tam_valor = _texto_ajustado(c, valor, "Helvetica-Bold", 14, largura - 0.3 * cm, tamanho_min=8)
+    _texto_centralizado(c, cx, y + altura - 1.95 * cm, valor_final, "Helvetica-Bold", tam_valor, cor_valor)
 
     if subtitulo:
-        tam_sub = 7.3
-        while tam_sub > 6 and c.stringWidth(subtitulo, "Helvetica", tam_sub) > largura - 0.3 * cm:
-            tam_sub -= 0.3
-        _texto_centralizado(c, cx, y + 0.35 * cm, subtitulo, "Helvetica", tam_sub, COR_TEXTO_SECUNDARIO)
+        sub_final, tam_sub = _texto_ajustado(c, subtitulo, "Helvetica", 7.3, largura - 0.3 * cm, tamanho_min=6)
+        _texto_centralizado(c, cx, y + 0.35 * cm, sub_final, "Helvetica", tam_sub, COR_TEXTO_SECUNDARIO)
 
 
 def _desenhar_linha_kpis(c, cards: list[dict], y_topo: float) -> float:
@@ -157,9 +180,24 @@ def _desenhar_titulo_secao(c, x, y, texto, largura=None, extra_direita=None):
         c.drawRightString(x + largura, y, extra_direita)
 
 
-def _desenhar_lista_categorias(c, resumo: list[dict], x, y_topo, largura, altura_max) -> float:
+def _desenhar_lista_categorias(c, resumo: list[dict], x, y_topo, largura, altura_max, altura_disponivel=None) -> float:
+    """
+    altura_disponivel: se informado, a altura total que a lista deve
+    ocupar (título + linhas) é esse valor — as linhas se espaçam
+    dinamicamente para preencher exatamente esse espaço, em vez de usar
+    uma altura de linha fixa. Usado para a lista "esticar" e preencher o
+    mesmo espaço que a coluna vizinha (composição), sem sobrar vão em
+    branco nem precisar de um elemento extra embaixo.
+    """
     _desenhar_titulo_secao(c, x, y_topo, "GASTOS POR CATEGORIA", largura, "Valor (R$)  |  % total")
     y = y_topo - 0.55 * cm
+
+    n = len(resumo)
+    linha_altura_natural = 0.62 * cm
+    if altura_disponivel is not None and n > 0:
+        linha_altura = max(linha_altura_natural, (altura_disponivel - 0.55 * cm) / n)
+    else:
+        linha_altura = linha_altura_natural
 
     total = sum(float(r["total"]) for r in resumo)
     maior = max((float(r["total"]) for r in resumo), default=1)
@@ -170,8 +208,8 @@ def _desenhar_lista_categorias(c, resumo: list[dict], x, y_topo, largura, altura
     x_label = x + 0.65 * cm
     x_barra = x + 3.0 * cm
     largura_barra = largura - 3.0 * cm - largura_valor - largura_pct - 0.3 * cm
+    largura_label_max = x_barra - x_label - 0.15 * cm
 
-    linha_altura = 0.62 * cm
     for r in resumo:
         cat = r["categoria"]
         valor = float(r["total"])
@@ -182,7 +220,8 @@ def _desenhar_lista_categorias(c, resumo: list[dict], x, y_topo, largura, altura
 
         c.setFillColor(colors.HexColor(COR_TEXTO))
         c.setFont("Helvetica", 9)
-        c.drawString(x_label, y - 0.12 * cm, nome_categoria(cat))
+        label_final = _truncar_com_reticencias(c, nome_categoria(cat), "Helvetica", 9, largura_label_max)
+        c.drawString(x_label, y - 0.12 * cm, label_final)
 
         c.setFillColor(colors.HexColor(COR_TRILHO_BARRA))
         c.roundRect(x_barra, y - 0.17 * cm, largura_barra, 0.22 * cm, 0.1 * cm, stroke=0, fill=1)
@@ -400,6 +439,8 @@ def _desenhar_top_gastos(c, despesas_top: list[dict], x, y_topo, largura) -> flo
     x_icone = x + 0.55 * cm
     x_desc = x + 0.95 * cm
     x_valor = x + largura
+    largura_valor_col = 2.5 * cm
+    largura_desc_max = (x_valor - largura_valor_col) - x_desc - 0.15 * cm
 
     c.setFillColor(colors.HexColor(COR_TEXTO_SECUNDARIO))
     c.setFont("Helvetica", 7.5)
@@ -417,11 +458,13 @@ def _desenhar_top_gastos(c, despesas_top: list[dict], x, y_topo, largura) -> flo
 
         c.setFillColor(colors.HexColor(COR_TEXTO))
         c.setFont("Helvetica", 8.7)
-        c.drawString(x_desc, y - 0.12 * cm, d["descricao"][:26])
+        desc_final = _truncar_com_reticencias(c, d["descricao"], "Helvetica", 8.7, largura_desc_max)
+        c.drawString(x_desc, y - 0.12 * cm, desc_final)
 
         c.setFillColor(colors.HexColor(COR_TEXTO_SECUNDARIO))
         c.setFont("Helvetica", 7.3)
-        c.drawString(x_desc, y - 0.4 * cm, nome_categoria(cat))
+        cat_final = _truncar_com_reticencias(c, nome_categoria(cat), "Helvetica", 7.3, largura_desc_max)
+        c.drawString(x_desc, y - 0.4 * cm, cat_final)
 
         c.setFillColor(colors.HexColor(COR_TEXTO))
         c.setFont("Helvetica-Bold", 8.7)
@@ -457,21 +500,32 @@ def _desenhar_em_resumo(c, insights: list[dict], y_topo: float) -> float:
                                   entrelinha=0.32 * cm, max_linhas=3)
         x += largura + gap
 
-    return y - GAP
+    return y
 
 
-def _desenhar_rodape(c, dica: str, data_geracao: str):
+def _desenhar_rodape(c, dica: str, data_geracao: str, y_topo: float):
+    """
+    y_topo: posição imediatamente após o último conteúdo acima (os cards
+    de "Em resumo"). O rodapé é posicionado a partir daí, com um vão bem
+    menor do que o espaço usado entre as seções de cima — em vez de ficar
+    fixo lá embaixo na margem da página, independente de quanto conteúdo
+    tem acima.
+    """
     altura = 1.0 * cm
+    gap_acima_disclaimer = 0.2 * cm
+    gap_disclaimer_banda = 0.15 * cm
 
+    y_disclaimer = y_topo - gap_acima_disclaimer
     c.setFillColor(colors.HexColor(COR_TEXTO_SECUNDARIO))
     c.setFont("Helvetica", 6.5)
-    c.drawCentredString(LARGURA / 2, MARGEM + altura - 0.05 * cm,
+    c.drawCentredString(LARGURA / 2, y_disclaimer,
                          "Relatório com caráter informativo — não constitui aconselhamento financeiro profissional.")
 
+    y_banda_topo = y_disclaimer - gap_disclaimer_banda
     c.setFillColor(colors.HexColor(COR_FOOTER_BG))
-    c.roundRect(MARGEM, MARGEM - 0.2 * cm, LARGURA_UTIL, altura, 0.1 * cm, stroke=0, fill=1)
+    c.roundRect(MARGEM, y_banda_topo - altura, LARGURA_UTIL, altura, 0.1 * cm, stroke=0, fill=1)
 
-    y_texto = MARGEM - 0.2 * cm + altura / 2 - 0.1 * cm
+    y_texto = y_banda_topo - altura / 2 - 0.1 * cm
     icons.icon_lightbulb(c, MARGEM + 0.5 * cm, y_texto + 0.05 * cm, 0.22 * cm, COR_SECUNDARIA)
     c.setFillColor(colors.HexColor(COR_TEXTO))
     c.setFont("Helvetica", 8)
@@ -542,51 +596,42 @@ def montar_dashboard_pdf(
     y_secoes = y
 
     # =====================================================================
-    # Linha 1: Gastos por categoria (+ insight) | Composição dos gastos
+    # Linha 1: Gastos por categoria | Composição dos gastos
     #
     # As duas colunas raramente têm a mesma altura "natural" (depende de
     # quantas categorias existem e de quantos itens tem a legenda do
     # donut). Em vez de alinhar pelo menor e deixar sobra de espaço em
     # branco na coluna mais curta, calculamos as duas alturas primeiro e
-    # esticamos o elemento flexível da coluna mais curta (a caixa de
-    # insight à esquerda, ou o espaço acima do donut à direita) até as
-    # duas baterem exatamente — sem espaço sobrando em nenhuma delas.
+    # esticamos o elemento flexível da coluna mais curta — as próprias
+    # linhas da lista de categorias (espaçamento dinâmico), ou o espaço
+    # acima do donut à direita — até as duas baterem exatamente.
     # =====================================================================
-    INSIGHT_MIN = 1.05 * cm
-
     largura_cat_interna = largura_col1 - 2 * CARD_PAD
     n_cat = len(resumo_categoria)
-    altura_cat_card = 0.55 * cm + n_cat * 0.62 * cm + 2 * CARD_PAD
-    altura_esq_sem_insight = altura_cat_card + GAP
+    altura_cat_natural = 0.55 * cm + n_cat * 0.62 * cm + 2 * CARD_PAD
 
     largura_comp_interna = largura_col2 - 2 * CARD_PAD
     n_legenda = len(_agrupar_top5_outros(resumo_categoria))
     tam_img_comp = largura_comp_interna * 0.8
     altura_comp_natural = 0.5 * cm + tam_img_comp + 0.35 * cm + n_legenda * 0.42 * cm + 2 * CARD_PAD
 
-    if altura_comp_natural >= altura_esq_sem_insight + INSIGHT_MIN:
-        altura_insight = altura_comp_natural - altura_esq_sem_insight
+    if altura_comp_natural >= altura_cat_natural:
+        altura_cat_card = altura_comp_natural
         altura_comp_card = altura_comp_natural
         extra_gap_comp = 0
+        conteudo_disponivel_cat = altura_cat_card - 2 * CARD_PAD
     else:
-        altura_insight = INSIGHT_MIN
-        altura_comp_card = altura_esq_sem_insight + altura_insight
+        altura_cat_card = altura_cat_natural
+        altura_comp_card = altura_cat_natural
         extra_gap_comp = altura_comp_card - altura_comp_natural
+        conteudo_disponivel_cat = None
 
     _desenhar_moldura_card(c, MARGEM, y_secoes, largura_col1, altura_cat_card)
     _desenhar_lista_categorias(
         c, resumo_categoria, MARGEM + CARD_PAD, y_secoes - CARD_PAD, largura_cat_interna, 6 * cm,
+        altura_disponivel=conteudo_disponivel_cat,
     )
-    y_apos_cat_card = y_secoes - altura_cat_card
-
-    if resumo_categoria:
-        top3_pct = sum(float(r["total"]) for r in resumo_categoria[:3]) / total_atual * 100 if total_atual else 0
-        _desenhar_caixa_insight(
-            c, MARGEM, y_apos_cat_card - GAP, largura_col1, "pie",
-            f"As {min(3, len(resumo_categoria))} maiores categorias representam {top3_pct:.0f}% do total gasto.",
-            altura=altura_insight,
-        )
-    y1_final = y_apos_cat_card - GAP - altura_insight
+    y1_final = y_secoes - altura_cat_card
 
     _desenhar_moldura_card(c, x_col2, y_secoes, largura_col2, altura_comp_card)
     _desenhar_composicao(
@@ -628,9 +673,9 @@ def montar_dashboard_pdf(
     _desenhar_top_gastos(c, despesas_top, x_col2 + CARD_PAD, y_meio - CARD_PAD, largura_top_interna)
     y4_final = y_meio - altura_top_card
 
-    y_resumo = y3_final - GAP  # y3_final == y4_final por construção
-    _desenhar_em_resumo(c, insights, y_resumo)
+    y_resumo = y3_final - GAP_ANTES_RESUMO  # y3_final == y4_final por construção
+    y_apos_resumo = _desenhar_em_resumo(c, insights, y_resumo)
 
-    _desenhar_rodape(c, dica, data_geracao)
+    _desenhar_rodape(c, dica, data_geracao, y_apos_resumo)
 
     c.save()
