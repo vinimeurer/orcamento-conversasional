@@ -23,6 +23,8 @@ from dash_style import (
 LARGURA, ALTURA = A4
 MARGEM = 1.3 * cm
 LARGURA_UTIL = LARGURA - 2 * MARGEM
+CARD_PAD = 0.45 * cm
+GAP = 0.3 * cm
 
 MESES_PT = [
     "", "JANEIRO", "FEVEREIRO", "MARÇO", "ABRIL", "MAIO", "JUNHO",
@@ -53,6 +55,17 @@ def _texto_centralizado(c, x, y, texto, fonte, tamanho, cor):
     c.setFillColor(colors.HexColor(cor))
     c.setFont(fonte, tamanho)
     c.drawCentredString(x, y, texto)
+
+
+def _desenhar_moldura_card(c, x, y_topo, largura, altura):
+    """
+    Desenha a mesma moldura sutil dos cards de KPI (fundo branco + borda
+    clara arredondada) por trás de uma seção de gráfico, pra dar a mesma
+    organização visual do template de referência.
+    """
+    c.setFillColor(colors.white)
+    c.setStrokeColor(colors.HexColor(COR_CARD_BORDA))
+    c.roundRect(x, y_topo - altura, largura, altura, 0.14 * cm, stroke=1, fill=1)
 
 
 # ---------------------------------------------------------------------------
@@ -101,24 +114,24 @@ def _desenhar_kpi_card(c, x, y, largura, altura, icone, label, valor, subtitulo,
     c.roundRect(x, y, largura, altura, 0.12 * cm, stroke=1, fill=1)
 
     cx = x + largura / 2
-    _icone_badge(c, cx, y + altura - 0.65 * cm, 0.42 * cm, icone)
+    _icone_badge(c, cx, y + altura - 0.55 * cm, 0.42 * cm, icone)
 
-    _texto_centralizado(c, cx, y + altura - 1.25 * cm, label.upper(), "Helvetica", 7.3, COR_TEXTO_SECUNDARIO)
+    _texto_centralizado(c, cx, y + altura - 1.35 * cm, label.upper(), "Helvetica", 7.3, COR_TEXTO_SECUNDARIO)
 
     tam_valor = 14
     while tam_valor > 8 and c.stringWidth(valor, "Helvetica-Bold", tam_valor) > largura - 0.3 * cm:
         tam_valor -= 0.5
-    _texto_centralizado(c, cx, y + altura - 1.65 * cm, valor, "Helvetica-Bold", tam_valor, cor_valor)
+    _texto_centralizado(c, cx, y + altura - 1.95 * cm, valor, "Helvetica-Bold", tam_valor, cor_valor)
 
     if subtitulo:
         tam_sub = 7.3
         while tam_sub > 6 and c.stringWidth(subtitulo, "Helvetica", tam_sub) > largura - 0.3 * cm:
             tam_sub -= 0.3
-        _texto_centralizado(c, cx, y + 0.3 * cm, subtitulo, "Helvetica", tam_sub, COR_TEXTO_SECUNDARIO)
+        _texto_centralizado(c, cx, y + 0.35 * cm, subtitulo, "Helvetica", tam_sub, COR_TEXTO_SECUNDARIO)
 
 
 def _desenhar_linha_kpis(c, cards: list[dict], y_topo: float) -> float:
-    altura = 2.5 * cm
+    altura = 2.75 * cm
     gap = 0.3 * cm
     n = len(cards)
     largura = (LARGURA_UTIL - gap * (n - 1)) / n
@@ -127,7 +140,7 @@ def _desenhar_linha_kpis(c, cards: list[dict], y_topo: float) -> float:
     for card in cards:
         _desenhar_kpi_card(c, x, y, largura, altura, **card)
         x += largura + gap
-    return y - 0.5 * cm
+    return y - GAP
 
 
 # ---------------------------------------------------------------------------
@@ -191,8 +204,7 @@ def _desenhar_lista_categorias(c, resumo: list[dict], x, y_topo, largura, altura
     return y
 
 
-def _desenhar_caixa_insight(c, x, y_topo, largura, icone, texto) -> float:
-    altura = 1.05 * cm
+def _desenhar_caixa_insight(c, x, y_topo, largura, icone, texto, altura=1.05 * cm) -> float:
     y = y_topo - altura
     c.setFillColor(colors.HexColor(COR_INSIGHT_BG))
     c.roundRect(x, y, largura, altura, 0.12 * cm, stroke=0, fill=1)
@@ -201,7 +213,7 @@ def _desenhar_caixa_insight(c, x, y_topo, largura, icone, texto) -> float:
     c.setFont("Helvetica", 8.5)
     _texto_paragrafo_simples(c, texto, x + 1.15 * cm, y + altura / 2 + 0.12 * cm,
                               largura - 1.5 * cm, "Helvetica", 8.5, COR_TEXTO)
-    return y - 0.4 * cm
+    return y
 
 
 def _texto_paragrafo_simples(c, texto, x, y, largura_max, fonte, tamanho, cor, entrelinha=0.32 * cm, max_linhas=2):
@@ -290,7 +302,7 @@ def _grafico_donut(resumo_donut: list[dict], total: float):
     return buf
 
 
-def _desenhar_composicao(c, resumo: list[dict], total: float, x, y_topo, largura) -> float:
+def _desenhar_composicao(c, resumo: list[dict], total: float, x, y_topo, largura, extra_gap_topo=0) -> float:
     from reportlab.lib.utils import ImageReader
 
     _desenhar_titulo_secao(c, x, y_topo, "COMPOSIÇÃO DOS GASTOS")
@@ -298,7 +310,7 @@ def _desenhar_composicao(c, resumo: list[dict], total: float, x, y_topo, largura
 
     tam_img = largura * 0.8
     x_img = x + (largura - tam_img) / 2
-    y_img = y_topo - 0.5 * cm - tam_img
+    y_img = y_topo - 0.5 * cm - extra_gap_topo - tam_img
     c.drawImage(ImageReader(_grafico_donut(resumo_donut, total)),
                 x_img, y_img, width=tam_img, height=tam_img, mask="auto")
 
@@ -368,11 +380,12 @@ def _grafico_evolucao_area(evolucao: list[dict]):
     return buf
 
 
-def _desenhar_evolucao(c, evolucao: list[dict], x, y_topo, largura) -> float:
+def _desenhar_evolucao(c, evolucao: list[dict], x, y_topo, largura, altura_img=None) -> float:
     from reportlab.lib.utils import ImageReader
 
     _desenhar_titulo_secao(c, x, y_topo, "GASTOS AO LONGO DO MÊS", largura, "Valor gasto por dia (R$)")
-    altura_img = largura * 0.33
+    if altura_img is None:
+        altura_img = largura * 0.33
     y_img = y_topo - 0.5 * cm - altura_img
     c.drawImage(ImageReader(_grafico_evolucao_area(evolucao)),
                 x, y_img, width=largura, height=altura_img, mask="auto")
@@ -425,10 +438,10 @@ def _desenhar_top_gastos(c, despesas_top: list[dict], x, y_topo, largura) -> flo
 
 def _desenhar_em_resumo(c, insights: list[dict], y_topo: float) -> float:
     _desenhar_titulo_secao(c, MARGEM, y_topo, "EM RESUMO")
-    y_topo -= 0.5 * cm
+    y_topo -= GAP + 0.2 * cm
 
     altura = 2.3 * cm
-    gap = 0.3 * cm
+    gap = GAP
     n = len(insights)
     largura = (LARGURA_UTIL - gap * (n - 1)) / n
     x = MARGEM
@@ -438,13 +451,13 @@ def _desenhar_em_resumo(c, insights: list[dict], y_topo: float) -> float:
         c.setFillColor(colors.white)
         c.setStrokeColor(colors.HexColor(COR_CARD_BORDA))
         c.roundRect(x, y, largura, altura, 0.12 * cm, stroke=1, fill=1)
-        _icone_badge(c, x + 0.65 * cm, y + altura - 0.6 * cm, 0.34 * cm, item["icone"])
-        _texto_paragrafo_simples(c, item["texto"], x + 0.35 * cm, y + altura - 1.15 * cm,
+        _icone_badge(c, x + 0.65 * cm, y + altura - 0.55 * cm, 0.34 * cm, item["icone"])
+        _texto_paragrafo_simples(c, item["texto"], x + 0.35 * cm, y + altura - 1.3 * cm,
                                   largura - 0.7 * cm, "Helvetica", 8, COR_TEXTO,
                                   entrelinha=0.32 * cm, max_linhas=3)
         x += largura + gap
 
-    return y - 0.5 * cm
+    return y - GAP
 
 
 def _desenhar_rodape(c, dica: str, data_geracao: str):
@@ -528,21 +541,94 @@ def montar_dashboard_pdf(
     x_col2 = MARGEM + LARGURA_UTIL - largura_col2
     y_secoes = y
 
-    y1 = _desenhar_lista_categorias(c, resumo_categoria, MARGEM, y_secoes, largura_col1, 6 * cm)
+    # =====================================================================
+    # Linha 1: Gastos por categoria (+ insight) | Composição dos gastos
+    #
+    # As duas colunas raramente têm a mesma altura "natural" (depende de
+    # quantas categorias existem e de quantos itens tem a legenda do
+    # donut). Em vez de alinhar pelo menor e deixar sobra de espaço em
+    # branco na coluna mais curta, calculamos as duas alturas primeiro e
+    # esticamos o elemento flexível da coluna mais curta (a caixa de
+    # insight à esquerda, ou o espaço acima do donut à direita) até as
+    # duas baterem exatamente — sem espaço sobrando em nenhuma delas.
+    # =====================================================================
+    INSIGHT_MIN = 1.05 * cm
+
+    largura_cat_interna = largura_col1 - 2 * CARD_PAD
+    n_cat = len(resumo_categoria)
+    altura_cat_card = 0.55 * cm + n_cat * 0.62 * cm + 2 * CARD_PAD
+    altura_esq_sem_insight = altura_cat_card + GAP
+
+    largura_comp_interna = largura_col2 - 2 * CARD_PAD
+    n_legenda = len(_agrupar_top5_outros(resumo_categoria))
+    tam_img_comp = largura_comp_interna * 0.8
+    altura_comp_natural = 0.5 * cm + tam_img_comp + 0.35 * cm + n_legenda * 0.42 * cm + 2 * CARD_PAD
+
+    if altura_comp_natural >= altura_esq_sem_insight + INSIGHT_MIN:
+        altura_insight = altura_comp_natural - altura_esq_sem_insight
+        altura_comp_card = altura_comp_natural
+        extra_gap_comp = 0
+    else:
+        altura_insight = INSIGHT_MIN
+        altura_comp_card = altura_esq_sem_insight + altura_insight
+        extra_gap_comp = altura_comp_card - altura_comp_natural
+
+    _desenhar_moldura_card(c, MARGEM, y_secoes, largura_col1, altura_cat_card)
+    _desenhar_lista_categorias(
+        c, resumo_categoria, MARGEM + CARD_PAD, y_secoes - CARD_PAD, largura_cat_interna, 6 * cm,
+    )
+    y_apos_cat_card = y_secoes - altura_cat_card
+
     if resumo_categoria:
         top3_pct = sum(float(r["total"]) for r in resumo_categoria[:3]) / total_atual * 100 if total_atual else 0
-        y1 = _desenhar_caixa_insight(
-            c, MARGEM, y1, largura_col1, "pie",
+        _desenhar_caixa_insight(
+            c, MARGEM, y_apos_cat_card - GAP, largura_col1, "pie",
             f"As {min(3, len(resumo_categoria))} maiores categorias representam {top3_pct:.0f}% do total gasto.",
+            altura=altura_insight,
         )
-    y2 = _desenhar_composicao(c, resumo_categoria, total_atual, x_col2, y_secoes, largura_col2)
+    y1_final = y_apos_cat_card - GAP - altura_insight
 
-    y_meio = min(y1, y2) - 0.3 * cm
+    _desenhar_moldura_card(c, x_col2, y_secoes, largura_col2, altura_comp_card)
+    _desenhar_composicao(
+        c, resumo_categoria, total_atual, x_col2 + CARD_PAD, y_secoes - CARD_PAD, largura_comp_interna,
+        extra_gap_topo=extra_gap_comp,
+    )
+    y2_final = y_secoes - altura_comp_card
 
-    y3 = _desenhar_evolucao(c, evolucao, MARGEM, y_meio, largura_col1)
-    y4 = _desenhar_top_gastos(c, despesas_top, x_col2, y_meio, largura_col2)
+    y_meio = y1_final - GAP  # y1_final == y2_final por construção
 
-    y_resumo = min(y3, y4) - 0.2 * cm
+    # =====================================================================
+    # Linha 2: Gastos ao longo do mês | Principais gastos
+    # Mesma lógica: a tabela de principais gastos tem altura previsível
+    # (até 5 linhas fixas); esticamos o gráfico de evolução para bater
+    # exatamente com ela.
+    # =====================================================================
+    largura_evo_interna = largura_col1 - 2 * CARD_PAD
+    altura_img_evo_natural = largura_evo_interna * 0.33
+    altura_evo_natural = 0.5 * cm + altura_img_evo_natural + 0.3 * cm + 2 * CARD_PAD
+
+    largura_top_interna = largura_col2 - 2 * CARD_PAD
+    n_top = len(despesas_top)
+    altura_top_card = 1.05 * cm + n_top * 0.85 * cm + 2 * CARD_PAD
+
+    if altura_top_card >= altura_evo_natural:
+        altura_img_evo = altura_img_evo_natural + (altura_top_card - altura_evo_natural)
+        altura_evo_card = altura_top_card
+    else:
+        altura_img_evo = altura_img_evo_natural
+        altura_evo_card = altura_evo_natural
+        altura_top_card = altura_evo_natural
+
+    _desenhar_moldura_card(c, MARGEM, y_meio, largura_col1, altura_evo_card)
+    _desenhar_evolucao(c, evolucao, MARGEM + CARD_PAD, y_meio - CARD_PAD, largura_evo_interna,
+                        altura_img=altura_img_evo)
+    y3_final = y_meio - altura_evo_card
+
+    _desenhar_moldura_card(c, x_col2, y_meio, largura_col2, altura_top_card)
+    _desenhar_top_gastos(c, despesas_top, x_col2 + CARD_PAD, y_meio - CARD_PAD, largura_top_interna)
+    y4_final = y_meio - altura_top_card
+
+    y_resumo = y3_final - GAP  # y3_final == y4_final por construção
     _desenhar_em_resumo(c, insights, y_resumo)
 
     _desenhar_rodape(c, dica, data_geracao)
