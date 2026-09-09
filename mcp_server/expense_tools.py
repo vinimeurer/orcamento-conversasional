@@ -1,12 +1,33 @@
 import datetime
 import sys
-from pathlib import Path
+import os
+import tempfile
+import requests
 
 from mcp.server import MCPServer
+
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from db.connection import get_cursor, get_or_create_usuario
+from dashboard_builder import montar_dashboard_pdf
+from dash_style import nome_categoria
+
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+
+MESES_PT = [
+    "", "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+    "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+]
+
+
+def _titulo_periodo(data_inicio: str, data_fim: str) -> str:
+    di = datetime.date.fromisoformat(data_inicio)
+    df = datetime.date.fromisoformat(data_fim)
+    if di.year == df.year and di.month == df.month:
+        return f"{MESES_PT[di.month].upper()} / {di.year}"
+    return f"{di.strftime('%d/%m/%Y')} A {df.strftime('%d/%m/%Y')}"
 
 server = MCPServer(
     name="orcamento-despesas",
@@ -208,6 +229,201 @@ def resumo_por_categoria(
         ],
     }
 
+def _resumo_categoria_periodo(usuario_id: int, data_inicio: str, data_fim: str) -> list[dict]:
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT c.nome AS categoria, SUM(d.valor) AS total
+            FROM despesas d
+            JOIN categorias c ON c.id = d.categoria_id
+            WHERE d.usuario_id = %s AND d.data_despesa BETWEEN %s AND %s
+            GROUP BY c.nome
+            ORDER BY total DESC
+            """,
+            (usuario_id, data_inicio, data_fim),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def _evolucao_diaria(usuario_id: int, data_inicio: str, data_fim: str) -> list[dict]:
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT data_despesa, SUM(valor) AS total
+            FROM despesas
+            WHERE usuario_id = %s AND data_despesa BETWEEN %s AND %s
+            GROUP BY data_despesa
+            ORDER BY data_despesa
+            """,
+            (usuario_id, data_inicio, data_fim),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def _despesas_periodo(usuario_id: int, data_inicio: str, data_fim: str) -> list[dict]:
+    """
+    Busca as despesas individuais do período (não agregadas), usadas nos
+    detalhamentos por categoria e por dia do relatório em PDF.
+    """
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT d.valor, d.descricao, c.nome AS categoria, d.data_despesa
+            FROM despesas d
+            JOIN categorias c ON c.id = d.categoria_id
+            WHERE d.usuario_id = %s AND d.data_despesa BETWEEN %s AND %s
+            ORDER BY d.data_despesa ASC
+            """,
+            (usuario_id, data_inicio, data_fim),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def _enviar_pdf_telegram(telegram_id: int, caminho: str, legenda: str) -> bool:
+    """
+    Envia o PDF diretamente pela API do Telegram (sendDocument), sem
+    depender do Nanobot interpretar um artefato retornado pelo MCP.
+
+    Nota de arquitetura: isso acopla esta tool ao canal Telegram
+    especificamente (RNF45 previa desacoplamento entre agente e
+    ferramentas). Foi uma escolha deliberada — a alternativa (devolver o
+    PDF como recurso MCP e confiar que o Nanobot repassa como anexo) não
+    tem suporte documentado/testado no framework para o tipo "resource"
+    do MCP. Se isso mudar em uma versão futura do Nanobot, esta função
+    pode ser removida e a tool pode voltar a apenas retornar o arquivo.
+    """
+    if not TELEGRAM_TOKEN:
+        return False, "TELEGRAM_TOKEN não está definido no ambiente do servidor MCP."
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
+    try:
+        with open(caminho, "rb") as f:
+            resp = requests.post(
+                url,
+                data={"chat_id": telegram_id, "caption": legenda},
+                files={"document": (os.path.basename(caminho), f, "application/pdf")},
+                timeout=30,
+            )
+        if resp.ok:
+            return True, None
+        return False, f"Telegram respondeu {resp.status_code}: {resp.text[:300]}"
+    except requests.RequestException as exc:
+        # Falha de rede/timeout não pode derrubar a tool inteira — o
+        # chamador trata isso como "não foi possível enviar" e informa
+        # o usuário de forma controlada.
+        return False, f"Erro de rede ao chamar a API do Telegram: {exc}"
+
+
+@server.tool()
+def gerar_relatorio_pdf(
+    telegram_id: int,
+    data_inicio: str,
+    data_fim: str,
+) -> dict:
+    """
+    Gera um dashboard-resumo dos gastos de um único período em PDF (uma
+    página): KPIs principais, gastos por categoria, composição, evolução
+    diária e principais gastos. Não faz comparação com períodos anteriores
+    nem detalhamento registro a registro — é um resumo visual rápido do
+    período (ex: os gastos do mês). Envia o PDF diretamente para o usuário
+    no Telegram.
+
+    IMPORTANTE: data_inicio e data_fim são obrigatórios. Se o usuário
+    pedir um relatório sem informar um período, pergunte o período antes
+    de chamar esta ferramenta — nunca assuma um período por conta própria.
+
+    Args:
+        telegram_id: id numérico do usuário no Telegram.
+        data_inicio: data inicial no formato YYYY-MM-DD, inclusiva.
+        data_fim: data final no formato YYYY-MM-DD, inclusiva.
+    """
+    usuario_id = get_or_create_usuario(telegram_id)
+
+    resumo_categoria = _resumo_categoria_periodo(usuario_id, data_inicio, data_fim)
+    evolucao = _evolucao_diaria(usuario_id, data_inicio, data_fim)
+    despesas = _despesas_periodo(usuario_id, data_inicio, data_fim)
+    total_atual = sum(float(r["total"]) for r in resumo_categoria)
+
+    if not resumo_categoria:
+        return {
+            "sucesso": False,
+            "erro": "Não há despesas registradas nesse período para gerar o relatório.",
+        }
+
+    n_lancamentos = len(despesas)
+    gasto_medio = total_atual / n_lancamentos if n_lancamentos else 0.0
+    despesas_top = sorted(despesas, key=lambda d: -float(d["valor"]))[:5]
+    maior_despesa = despesas_top[0] if despesas_top else None
+
+    categoria_top = resumo_categoria[0]
+    pct_top = float(categoria_top["total"]) / total_atual * 100 if total_atual else 0
+    insights = [
+        dict(
+            icone="pie",
+            texto=(
+                f"{nome_categoria(categoria_top['categoria'])} foi sua maior categoria de "
+                f"gasto, representando {pct_top:.0f}% do total."
+            ),
+        )
+    ]
+
+    top_dias = sorted(evolucao, key=lambda e: -float(e["total"]))[:3]
+    if top_dias:
+        dias_fmt = [d["data_despesa"].strftime("%d/%m") for d in
+                    sorted(top_dias, key=lambda e: e["data_despesa"])]
+        dias_txt = ", ".join(dias_fmt[:-1]) + (" e " + dias_fmt[-1] if len(dias_fmt) > 1 else dias_fmt[0])
+        insights.append(dict(icone="calendar", texto=f"Os dias com maiores gastos foram {dias_txt}."))
+
+    if resumo_categoria:
+        n_top3 = min(3, len(resumo_categoria))
+        top3_pct = sum(float(r["total"]) for r in resumo_categoria[:n_top3]) / total_atual * 100 if total_atual else 0
+        insights.append(dict(
+            icone="pie",
+            texto=f"As {n_top3} maiores categorias representam {top3_pct:.0f}% do total gasto.",
+        ))
+    else:
+        insights.append(dict(
+            icone="pie",
+            texto="Continue acompanhando seus gastos regularmente para manter o controle do orçamento.",
+        ))
+
+    with tempfile.TemporaryDirectory() as tmp:
+        caminho_pdf = os.path.join(tmp, f"relatorio_{data_inicio}_a_{data_fim}.pdf")
+        montar_dashboard_pdf(
+            caminho_pdf,
+            _titulo_periodo(data_inicio, data_fim),
+            data_inicio,
+            data_fim,
+            total_atual,
+            n_lancamentos,
+            gasto_medio,
+            resumo_categoria,
+            evolucao,
+            despesas_top,
+            maior_despesa,
+            insights,
+            "revisar seus gastos regularmente é o primeiro passo para conquistar seus objetivos financeiros.",
+            datetime.date.today().strftime("%d/%m/%Y"),
+        )
+
+        legenda = f"Relatório de gastos: {data_inicio} a {data_fim}"
+        enviado, motivo_falha = _enviar_pdf_telegram(telegram_id, caminho_pdf, legenda)
+
+    if not enviado:
+        # O motivo detalhado fica em "detalhe_tecnico" (não em "erro") de
+        # propósito: assim o SOUL.md pode instruir o agente a nunca repetir
+        # esse texto técnico pro usuário (RNF11), mas ele ainda aparece no
+        # log de "Tool call" do Nanobot pra você diagnosticar.
+        return {
+            "sucesso": False,
+            "erro": "O relatório foi gerado, mas não foi possível enviá-lo pelo Telegram.",
+            "detalhe_tecnico": motivo_falha,
+        }
+
+    return {
+        "sucesso": True,
+        "total_gasto": round(total_atual, 2),
+        "periodo": {"inicio": data_inicio, "fim": data_fim},
+    }
 
 if __name__ == "__main__":
     import os
