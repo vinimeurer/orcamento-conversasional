@@ -89,9 +89,13 @@ def registrar_despesa(
         categoria: uma das categorias válidas; use "outros" se não tiver
             certeza.
         metodo_pagamento: OBRIGATÓRIO — um destes valores exatos: "pix",
-            "debito", "credito" ou "dinheiro". Se o usuário não informar
-            como pagou, pergunte antes de chamar esta ferramenta — nunca
-            chame sem esse dado nem invente um valor.
+            "debito", "credito", "dinheiro", "boleto",
+            "debito_automatico", "faturamento", "ted", "vale_refeicao",
+            "vale_alimentacao" ou "outros". Se o usuário não informar como
+            pagou, pergunte antes de chamar esta ferramenta — nunca chame
+            sem esse dado. Se ele informar um método que não bate com
+            nenhum desses claramente, use "outros" (não invente nem force
+            um dos específicos).
         data_despesa: data no formato YYYY-MM-DD; se omitida, usa hoje.
         mensagem_original: texto original enviado pelo usuário, para
             auditoria e futura correção manual.
@@ -105,13 +109,7 @@ def registrar_despesa(
 
     metodo_normalizado = metodo_pagamento.strip().lower()
     if metodo_normalizado not in METODOS_PAGAMENTO_VALIDOS:
-        return {
-            "sucesso": False,
-            "erro": (
-                "Método de pagamento inválido. Use um destes: "
-                + ", ".join(METODOS_PAGAMENTO_VALIDOS)
-            ),
-        }
+        metodo_normalizado = "outros"
 
     data_final = data_despesa or datetime.date.today().isoformat()
 
