@@ -68,7 +68,13 @@ BEGIN
                 (mp.nome = 'pix'      AND d.forma_pagamento ILIKE '%pix%')
              OR (mp.nome = 'debito'   AND (d.forma_pagamento ILIKE '%débito%' OR d.forma_pagamento ILIKE '%debito%' OR d.forma_pagamento ILIKE '%debit%'))
              OR (mp.nome = 'credito'  AND (d.forma_pagamento ILIKE '%crédito%' OR d.forma_pagamento ILIKE '%credito%' OR d.forma_pagamento ILIKE '%credit%'))
-             OR (mp.nome = 'dinheiro' AND (d.forma_pagamento ILIKE '%dinheiro%' OR d.forma_pagamento ILIKE '%espécie%' OR d.forma_pagamento ILIKE '%especie%' OR d.forma_pagamento ILIKE '%cash%'))
+              OR (mp.nome = 'dinheiro' AND (d.forma_pagamento ILIKE '%dinheiro%' OR d.forma_pagamento ILIKE '%espécie%' OR d.forma_pagamento ILIKE '%especie%' OR d.forma_pagamento ILIKE '%cash%'))
+              OR (mp.nome = 'boleto' AND d.forma_pagamento ILIKE '%boleto%')
+              OR (mp.nome = 'debito_automatico' AND (d.forma_pagamento ILIKE '%débito automático%' OR d.forma_pagamento ILIKE '%debito automatico%' OR d.forma_pagamento ILIKE '%debit automatic%'))
+              OR (mp.nome = 'faturamento' AND (d.forma_pagamento ILIKE '%faturamento%' OR d.forma_pagamento ILIKE '%fatura%'))
+              OR (mp.nome = 'ted' AND d.forma_pagamento ILIKE '%ted%')
+              OR (mp.nome = 'vale_refeicao' AND (d.forma_pagamento ILIKE '%vale refeição%' OR d.forma_pagamento ILIKE '%vale refeicao%' OR d.forma_pagamento ILIKE '%vale-refeição%' OR d.forma_pagamento ILIKE '%vale-refeicao%'))
+              OR (mp.nome = 'vale_alimentacao' AND (d.forma_pagamento ILIKE '%vale alimentação%' OR d.forma_pagamento ILIKE '%vale alimentacao%' OR d.forma_pagamento ILIKE '%vale-alimentação%' OR d.forma_pagamento ILIKE '%vale-alimentacao%'))
               );
 
         -- Preserva a coluna antiga em vez de apagar — só renomeia, pra
