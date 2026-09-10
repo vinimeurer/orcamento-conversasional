@@ -51,6 +51,22 @@ CATEGORIAS_VALIDAS = (
     "outros",
 )
 
+# Mantido no mesmo padrão de CATEGORIAS_VALIDAS, pro agente saber quais
+# valores são aceitos antes mesmo de tentar chamar a tool.
+METODOS_PAGAMENTO_VALIDOS = (
+    "pix",
+    "debito",
+    "credito",
+    "dinheiro",
+    "boleto",
+    "debito_automatico",
+    "faturamento",
+    "ted",
+    "vale_refeicao",
+    "vale_alimentacao",
+    "outros"
+)
+
 
 @server.tool()
 def registrar_despesa(
@@ -58,7 +74,7 @@ def registrar_despesa(
     valor: float,
     descricao: str,
     categoria: str,
-    forma_pagamento: str | None = None,
+    metodo_pagamento: str,
     data_despesa: str | None = None,
     mensagem_original: str | None = None,
 ) -> dict:
@@ -72,7 +88,14 @@ def registrar_despesa(
         descricao: descrição curta do gasto (ex: "almoço", "uber").
         categoria: uma das categorias válidas; use "outros" se não tiver
             certeza.
-        forma_pagamento: opcional, ex. "cartão", "pix", "dinheiro".
+        metodo_pagamento: OBRIGATÓRIO — um destes valores exatos: "pix",
+            "debito", "credito", "dinheiro", "boleto",
+            "debito_automatico", "faturamento", "ted", "vale_refeicao",
+            "vale_alimentacao" ou "outros". Se o usuário não informar como
+            pagou, pergunte antes de chamar esta ferramenta — nunca chame
+            sem esse dado. Se ele informar um método que não bate com
+            nenhum desses claramente, use "outros" (não invente nem force
+            um dos específicos).
         data_despesa: data no formato YYYY-MM-DD; se omitida, usa hoje.
         mensagem_original: texto original enviado pelo usuário, para
             auditoria e futura correção manual.
@@ -83,6 +106,10 @@ def registrar_despesa(
     categoria_normalizada = categoria.strip().lower()
     if categoria_normalizada not in CATEGORIAS_VALIDAS:
         categoria_normalizada = "outros"
+
+    metodo_normalizado = metodo_pagamento.strip().lower()
+    if metodo_normalizado not in METODOS_PAGAMENTO_VALIDOS:
+        metodo_normalizado = "outros"
 
     data_final = data_despesa or datetime.date.today().isoformat()
 
@@ -96,10 +123,16 @@ def registrar_despesa(
         categoria_id = cur.fetchone()["id"]
 
         cur.execute(
+            "SELECT id FROM metodo_pagamento WHERE nome = %s",
+            (metodo_normalizado,),
+        )
+        metodo_pagamento_id = cur.fetchone()["id"]
+
+        cur.execute(
             """
             INSERT INTO despesas
                 (usuario_id, valor, descricao, categoria_id,
-                 forma_pagamento, data_despesa, mensagem_original)
+                 metodo_pagamento_id, data_despesa, mensagem_original)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
@@ -108,7 +141,7 @@ def registrar_despesa(
                 valor,
                 descricao,
                 categoria_id,
-                forma_pagamento,
+                metodo_pagamento_id,
                 data_final,
                 mensagem_original,
             ),
@@ -121,6 +154,7 @@ def registrar_despesa(
         "valor": valor,
         "descricao": descricao,
         "categoria": categoria_normalizada,
+        "metodo_pagamento": metodo_normalizado,
         "data_despesa": data_final,
     }
 
@@ -146,9 +180,10 @@ def listar_despesas(
 
     query = """
         SELECT d.id, d.valor, d.descricao, c.nome AS categoria,
-               d.forma_pagamento, d.data_despesa
+               mp.nome AS metodo_pagamento, d.data_despesa
         FROM despesas d
         JOIN categorias c ON c.id = d.categoria_id
+        LEFT JOIN metodo_pagamento mp ON mp.id = d.metodo_pagamento_id
         WHERE d.usuario_id = %s
           AND d.data_despesa BETWEEN %s AND %s
     """
