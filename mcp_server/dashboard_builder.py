@@ -149,7 +149,8 @@ def _desenhar_kpi_card(c, x, y, largura, altura, icone, label, valor, subtitulo,
     cx = x + largura / 2
     _icone_badge(c, cx, y + altura - 0.55 * cm, 0.42 * cm, icone)
 
-    _texto_centralizado(c, cx, y + altura - 1.35 * cm, label.upper(), "Helvetica", 7.3, COR_TEXTO_SECUNDARIO)
+    label_final, tam_label = _texto_ajustado(c, label.upper(), "Helvetica", 7.3, largura - 0.3 * cm, tamanho_min=5.5)
+    _texto_centralizado(c, cx, y + altura - 1.35 * cm, label_final, "Helvetica", tam_label, COR_TEXTO_SECUNDARIO)
 
     valor_final, tam_valor = _texto_ajustado(c, valor, "Helvetica-Bold", 14, largura - 0.3 * cm, tamanho_min=8)
     _texto_centralizado(c, cx, y + altura - 1.95 * cm, valor_final, "Helvetica-Bold", tam_valor, cor_valor)

@@ -472,8 +472,8 @@ def desenhar_pagina_metodo_pagamento(
              subtitulo=(f"{metodo_top_transacoes['transacoes']} transações ({pct_top_transacoes:.0f}%)"
                         if metodo_top_transacoes else None)),
         dict(icone=icone_metodo_pagamento(metodo_top_transacoes["metodo_pagamento"]) if metodo_top_transacoes else "card",
-             label=f"Ticket médio {nome_top}", valor=moeda(ticket_top),
-             subtitulo="Média por transação"),
+             label="Ticket médio do mais usado", valor=moeda(ticket_top),
+             subtitulo=nome_top),
     ]
     y = _desenhar_linha_kpis(c, cards, y)
 
