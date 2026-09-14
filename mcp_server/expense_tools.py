@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from db.connection import get_cursor, get_or_create_usuario
 from dashboard_builder import montar_dashboard_pdf
-from dash_style import nome_categoria
+from dash_style import nome_categoria, nome_metodo_pagamento
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 
@@ -314,6 +314,70 @@ def _despesas_periodo(usuario_id: int, data_inicio: str, data_fim: str) -> list[
         return [dict(r) for r in cur.fetchall()]
 
 
+def _resumo_metodo_pagamento_periodo(usuario_id: int, data_inicio: str, data_fim: str) -> list[dict]:
+    """
+    Total gasto, quantidade de transações e (implicitamente) ticket médio
+    por método de pagamento no período — usado na página 2 do relatório.
+
+    Usa INNER JOIN com metodo_pagamento de propósito: uma despesa sem
+    método de pagamento reconhecido (só pode acontecer em dado legado, de
+    antes da coluna ser obrigatória) não tem como entrar num panorama "por
+    método de pagamento" — ela simplesmente não aparece aqui, mas continua
+    contabilizada normalmente nos totais da página 1.
+    """
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT mp.nome AS metodo_pagamento, COUNT(d.id) AS transacoes, SUM(d.valor) AS total
+            FROM despesas d
+            JOIN metodo_pagamento mp ON mp.id = d.metodo_pagamento_id
+            WHERE d.usuario_id = %s AND d.data_despesa BETWEEN %s AND %s
+            GROUP BY mp.nome
+            ORDER BY total DESC
+            """,
+            (usuario_id, data_inicio, data_fim),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def _evolucao_por_metodo_periodo(usuario_id: int, data_inicio: str, data_fim: str) -> list[dict]:
+    """Gasto por dia, aberto por método de pagamento (uma linha por
+    combinação dia+método que teve gasto) — usado no gráfico de evolução
+    multi-linha da página 2."""
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT d.data_despesa, mp.nome AS metodo_pagamento, SUM(d.valor) AS total
+            FROM despesas d
+            JOIN metodo_pagamento mp ON mp.id = d.metodo_pagamento_id
+            WHERE d.usuario_id = %s AND d.data_despesa BETWEEN %s AND %s
+            GROUP BY d.data_despesa, mp.nome
+            ORDER BY d.data_despesa
+            """,
+            (usuario_id, data_inicio, data_fim),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def _categoria_por_metodo_periodo(usuario_id: int, data_inicio: str, data_fim: str) -> list[dict]:
+    """Gasto por categoria, aberto por método de pagamento — usado no
+    gráfico de barras empilhadas "categoria x método" da página 2."""
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT c.nome AS categoria, mp.nome AS metodo_pagamento, SUM(d.valor) AS total
+            FROM despesas d
+            JOIN categorias c ON c.id = d.categoria_id
+            JOIN metodo_pagamento mp ON mp.id = d.metodo_pagamento_id
+            WHERE d.usuario_id = %s AND d.data_despesa BETWEEN %s AND %s
+            GROUP BY c.nome, mp.nome
+            ORDER BY c.nome
+            """,
+            (usuario_id, data_inicio, data_fim),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
 def _enviar_pdf_telegram(telegram_id: int, caminho: str, legenda: str) -> bool:
     """
     Envia o PDF diretamente pela API do Telegram (sendDocument), sem
@@ -355,12 +419,16 @@ def gerar_relatorio_pdf(
     data_fim: str,
 ) -> dict:
     """
-    Gera um dashboard-resumo dos gastos de um único período em PDF (uma
-    página): KPIs principais, gastos por categoria, composição, evolução
-    diária e principais gastos. Não faz comparação com períodos anteriores
-    nem detalhamento registro a registro — é um resumo visual rápido do
-    período (ex: os gastos do mês). Envia o PDF diretamente para o usuário
-    no Telegram.
+    Gera um dashboard-resumo dos gastos de um único período em PDF, com
+    duas páginas: a primeira com panorama por categoria (KPIs, gastos por
+    categoria, composição, evolução diária e principais gastos), e a
+    segunda com panorama por método de pagamento (KPIs, distribuição por
+    método, resumo por método, evolução diária por método e gastos por
+    categoria x método). A página 2 só é incluída se houver despesas com
+    método de pagamento identificado no período. Não faz comparação com
+    períodos anteriores nem detalhamento registro a registro — é um
+    resumo visual rápido do período (ex: os gastos do mês). Envia o PDF
+    diretamente para o usuário no Telegram.
 
     IMPORTANTE: data_inicio e data_fim são obrigatórios. Se o usuário
     pedir um relatório sem informar um período, pergunte o período antes
@@ -421,6 +489,71 @@ def gerar_relatorio_pdf(
             texto="Continue acompanhando seus gastos regularmente para manter o controle do orçamento.",
         ))
 
+    # ---- dados da página 2 (panorama por método de pagamento) ----
+    resumo_metodo = _resumo_metodo_pagamento_periodo(usuario_id, data_inicio, data_fim)
+    dados_pagamento = None
+
+    if resumo_metodo:
+        evolucao_metodo_raw = _evolucao_por_metodo_periodo(usuario_id, data_inicio, data_fim)
+        categoria_metodo_raw = _categoria_por_metodo_periodo(usuario_id, data_inicio, data_fim)
+        n_transacoes_metodo = sum(int(r["transacoes"]) for r in resumo_metodo)
+        total_metodo = sum(float(r["total"]) for r in resumo_metodo)
+        ticket_medio_geral_metodo = total_metodo / n_transacoes_metodo if n_transacoes_metodo else 0.0
+
+        metodo_mais_usado = max(resumo_metodo, key=lambda r: r["transacoes"])
+        pct_mais_usado = (
+            metodo_mais_usado["transacoes"] / n_transacoes_metodo * 100 if n_transacoes_metodo else 0
+        )
+        insights_pagamento = [dict(
+            icone="pie",
+            texto=(
+                f"{nome_metodo_pagamento(metodo_mais_usado['metodo_pagamento'])} foi o meio de "
+                f"pagamento mais utilizado, representando {pct_mais_usado:.0f}% das transações."
+            ),
+        )]
+
+        n_top3_cat = min(3, len(resumo_categoria))
+        if n_top3_cat:
+            nomes_top3 = [nome_categoria(r["categoria"]) for r in resumo_categoria[:n_top3_cat]]
+            pct_top3_cat = (
+                sum(float(r["total"]) for r in resumo_categoria[:n_top3_cat]) / total_atual * 100
+                if total_atual else 0
+            )
+            lista_nomes = ", ".join(nomes_top3[:-1]) + (
+                " e " + nomes_top3[-1] if len(nomes_top3) > 1 else nomes_top3[0]
+            )
+            plural = "categorias" if n_top3_cat > 1 else "categoria"
+            insights_pagamento.append(dict(
+                icone="calendar",
+                texto=f"A{'s' if n_top3_cat > 1 else ''} {plural} {lista_nomes} concentra"
+                      f"{'m' if n_top3_cat > 1 else ''} {pct_top3_cat:.0f}% dos gastos.",
+            ))
+
+        if len(resumo_metodo) >= 2:
+            segundo_metodo = resumo_metodo[1]
+            pct_segundo = float(segundo_metodo["total"]) / total_metodo * 100 if total_metodo else 0
+            insights_pagamento.append(dict(
+                icone="card",
+                texto=(
+                    f"{nome_metodo_pagamento(segundo_metodo['metodo_pagamento'])} foi o segundo meio "
+                    f"mais utilizado, com {pct_segundo:.0f}% do total."
+                ),
+            ))
+        else:
+            insights_pagamento.append(dict(
+                icone="card",
+                texto="Continue diversificando o acompanhamento por método de pagamento.",
+            ))
+
+        dados_pagamento = dict(
+            resumo_metodo=resumo_metodo,
+            n_transacoes=n_transacoes_metodo,
+            ticket_medio_geral=ticket_medio_geral_metodo,
+            evolucao_metodo_raw=evolucao_metodo_raw,
+            categoria_metodo_raw=categoria_metodo_raw,
+            insights=insights_pagamento,
+        )
+
     with tempfile.TemporaryDirectory() as tmp:
         caminho_pdf = os.path.join(tmp, f"relatorio_{data_inicio}_a_{data_fim}.pdf")
         montar_dashboard_pdf(
@@ -438,6 +571,7 @@ def gerar_relatorio_pdf(
             insights,
             "revisar seus gastos regularmente é o primeiro passo para conquistar seus objetivos financeiros.",
             datetime.date.today().strftime("%d/%m/%Y"),
+            dados_pagamento=dados_pagamento,
         )
 
         legenda = f"Relatório de gastos: {data_inicio} a {data_fim}"
