@@ -214,3 +214,82 @@ def icon_lightbulb(c, cx, cy, r, cor):
     c.circle(cx, cy + r * 0.1, r * 0.4, stroke=1, fill=0)
     c.rect(cx - r * 0.15, cy - r * 0.45, r * 0.3, r * 0.2, stroke=1, fill=0)
     c.line(cx - r * 0.1, cy - r * 0.25, cx + r * 0.1, cy - r * 0.25)
+
+
+def icon_bolt(c, cx, cy, r, cor):
+    """Pix — raio, remetendo a pagamento instantâneo."""
+    _cor(c, cor)
+    p = c.beginPath()
+    p.moveTo(cx + r * 0.15, cy + r * 0.6)
+    p.lineTo(cx - r * 0.35, cy - r * 0.05)
+    p.lineTo(cx - r * 0.05, cy - r * 0.05)
+    p.lineTo(cx - r * 0.15, cy - r * 0.6)
+    p.lineTo(cx + r * 0.35, cy + r * 0.15)
+    p.lineTo(cx + r * 0.05, cy + r * 0.15)
+    p.close()
+    c.drawPath(p, stroke=0, fill=1)
+
+
+def icon_card(c, cx, cy, r, cor):
+    """Débito/crédito — cartão simplificado (retângulo + tarja)."""
+    _cor(c, cor)
+    c.setLineWidth(1.1)
+    c.roundRect(cx - r * 0.55, cy - r * 0.4, r * 1.1, r * 0.8, r * 0.1, stroke=1, fill=0)
+    c.rect(cx - r * 0.55, cy + r * 0.08, r * 1.1, r * 0.16, stroke=0, fill=1)
+
+
+def icon_banknote(c, cx, cy, r, cor):
+    """Dinheiro — cédula simplificada (retângulo + círculo central)."""
+    _cor(c, cor)
+    c.setLineWidth(1.0)
+    c.roundRect(cx - r * 0.55, cy - r * 0.35, r * 1.1, r * 0.7, r * 0.06, stroke=1, fill=0)
+    c.circle(cx, cy, r * 0.18, stroke=1, fill=0)
+
+
+def icon_barcode(c, cx, cy, r, cor):
+    """Boleto — código de barras simplificado."""
+    _cor(c, cor)
+    larguras = [0.06, 0.03, 0.09, 0.03, 0.06, 0.03, 0.09, 0.03, 0.06]
+    x = cx - r * 0.5
+    for w in larguras:
+        c.rect(x, cy - r * 0.4, r * w, r * 0.8, stroke=0, fill=1)
+        x += r * (w + 0.03)
+
+
+def icon_transfer(c, cx, cy, r, cor):
+    """TED/transferência — duas setas horizontais opostas."""
+    _cor(c, cor)
+    c.setLineWidth(1.3)
+    c.line(cx - r * 0.5, cy + r * 0.18, cx + r * 0.35, cy + r * 0.18)
+    p1 = c.beginPath()
+    p1.moveTo(cx + r * 0.15, cy + r * 0.38)
+    p1.lineTo(cx + r * 0.42, cy + r * 0.18)
+    p1.lineTo(cx + r * 0.15, cy - r * 0.02)
+    c.drawPath(p1, stroke=1, fill=0)
+
+    c.line(cx + r * 0.5, cy - r * 0.18, cx - r * 0.35, cy - r * 0.18)
+    p2 = c.beginPath()
+    p2.moveTo(cx - r * 0.15, cy - r * 0.38)
+    p2.lineTo(cx - r * 0.42, cy - r * 0.18)
+    p2.lineTo(cx - r * 0.15, cy + r * 0.02)
+    c.drawPath(p2, stroke=1, fill=0)
+
+
+def icon_ticket(c, cx, cy, r, cor):
+    """Vale-refeição/alimentação — ticket simplificado (retângulo com
+    recortes nas laterais, tracejado no meio)."""
+    _cor(c, cor)
+    c.setLineWidth(1.0)
+    c.roundRect(cx - r * 0.55, cy - r * 0.35, r * 1.1, r * 0.7, r * 0.08, stroke=1, fill=0)
+    c.setDash(1.5, 1.5)
+    c.line(cx, cy - r * 0.35, cx, cy + r * 0.35)
+    c.setDash()
+
+
+def icon_invoice(c, cx, cy, r, cor):
+    """Faturamento — fatura simplificada (retângulo com linhas)."""
+    _cor(c, cor)
+    c.setLineWidth(1.0)
+    c.rect(cx - r * 0.45, cy - r * 0.55, r * 0.9, r * 1.1, stroke=1, fill=0)
+    for dy in (0.25, 0.0, -0.25):
+        c.line(cx - r * 0.25, cy + r * dy, cx + r * 0.25, cy + r * dy)

@@ -61,5 +61,64 @@ def icone_categoria(nome: str) -> str:
     return ICONE_CATEGORIA.get(nome, "dots")
 
 
+# ---------------------------------------------------------------------------
+# Métodos de pagamento (página 2 do relatório)
+# ---------------------------------------------------------------------------
+
+CORES_METODO_PAGAMENTO = {
+    "pix": "#2E6FF2",
+    "credito": "#22A559",
+    "debito": "#8B5CF6",
+    "dinheiro": "#F2A541",
+    "boleto": "#EC4899",
+    "debito_automatico": "#06B6D4",
+    "faturamento": "#F43F5E",
+    "ted": "#84A414",
+    "vale_refeicao": "#FB923C",
+    "vale_alimentacao": "#14B8A6",
+    "outros": "#B9BEC7",
+}
+
+NOMES_METODO_PAGAMENTO = {
+    "pix": "Pix",
+    "credito": "Cartão de Crédito",
+    "debito": "Cartão de Débito",
+    "dinheiro": "Dinheiro",
+    "boleto": "Boleto",
+    "debito_automatico": "Débito Automático",
+    "faturamento": "Faturamento",
+    "ted": "TED",
+    "vale_refeicao": "Vale-Refeição",
+    "vale_alimentacao": "Vale-Alimentação",
+    "outros": "Outros",
+}
+
+ICONE_METODO_PAGAMENTO = {
+    "pix": "bolt",
+    "credito": "card",
+    "debito": "card",
+    "dinheiro": "banknote",
+    "boleto": "barcode",
+    "debito_automatico": "refresh",
+    "faturamento": "invoice",
+    "ted": "transfer",
+    "vale_refeicao": "ticket",
+    "vale_alimentacao": "ticket",
+    "outros": "dots",
+}
+
+
+def nome_metodo_pagamento(nome: str) -> str:
+    return NOMES_METODO_PAGAMENTO.get(nome, nome.replace("_", " ").capitalize())
+
+
+def cor_metodo_pagamento(nome: str) -> str:
+    return CORES_METODO_PAGAMENTO.get(nome, "#B9BEC7")
+
+
+def icone_metodo_pagamento(nome: str) -> str:
+    return ICONE_METODO_PAGAMENTO.get(nome, "dots")
+
+
 def moeda(v: float) -> str:
     return f"R$ {v:,.2f}".replace(",", "@").replace(".", ",").replace("@", ".")

@@ -39,6 +39,10 @@ ICONS_POR_NOME = {
     "dots": icons.icon_dots, "calendar": icons.icon_calendar, "list": icons.icon_list,
     "barchart": icons.icon_barchart, "star": icons.icon_star, "wallet": icons.icon_wallet,
     "lightbulb": icons.icon_lightbulb,
+    # métodos de pagamento (página 2)
+    "bolt": icons.icon_bolt, "card": icons.icon_card, "banknote": icons.icon_banknote,
+    "barcode": icons.icon_barcode, "transfer": icons.icon_transfer,
+    "ticket": icons.icon_ticket, "invoice": icons.icon_invoice,
 }
 
 
@@ -99,7 +103,9 @@ def _desenhar_moldura_card(c, x, y_topo, largura, altura):
 # Cabeçalho
 # ---------------------------------------------------------------------------
 
-def _desenhar_cabecalho(c, titulo_periodo: str, data_inicio: str, data_fim: str, y_topo: float) -> float:
+def _desenhar_cabecalho(c, titulo_periodo: str, data_inicio: str, data_fim: str, y_topo: float,
+                         icone_card: str = "list", linha1_card: str = "Resumo simples e claro",
+                         linha2_card: str = "dos seus gastos no período.") -> float:
     x = MARGEM
     c.setFillColor(colors.HexColor(COR_TITULO))
     c.setFont("Helvetica-Bold", 24)
@@ -122,11 +128,11 @@ def _desenhar_cabecalho(c, titulo_periodo: str, data_inicio: str, data_fim: str,
     y_card = y_topo - 0.35 * cm - altura_card
     c.setFillColor(colors.HexColor(COR_INSIGHT_BG))
     c.roundRect(x_card, y_card, largura_card, altura_card, 0.15 * cm, stroke=0, fill=1)
-    _icone_badge(c, x_card + 0.9 * cm, y_card + altura_card / 2, 0.42 * cm, "list")
+    _icone_badge(c, x_card + 0.9 * cm, y_card + altura_card / 2, 0.42 * cm, icone_card)
     c.setFillColor(colors.HexColor(COR_TEXTO))
     c.setFont("Helvetica", 9)
-    c.drawString(x_card + 1.55 * cm, y_card + altura_card / 2 + 0.12 * cm, "Resumo simples e claro")
-    c.drawString(x_card + 1.55 * cm, y_card + altura_card / 2 - 0.18 * cm, "dos seus gastos no período.")
+    c.drawString(x_card + 1.55 * cm, y_card + altura_card / 2 + 0.12 * cm, linha1_card)
+    c.drawString(x_card + 1.55 * cm, y_card + altura_card / 2 - 0.18 * cm, linha2_card)
 
     return y_topo - 2.35 * cm
 
@@ -143,7 +149,8 @@ def _desenhar_kpi_card(c, x, y, largura, altura, icone, label, valor, subtitulo,
     cx = x + largura / 2
     _icone_badge(c, cx, y + altura - 0.55 * cm, 0.42 * cm, icone)
 
-    _texto_centralizado(c, cx, y + altura - 1.35 * cm, label.upper(), "Helvetica", 7.3, COR_TEXTO_SECUNDARIO)
+    label_final, tam_label = _texto_ajustado(c, label.upper(), "Helvetica", 7.3, largura - 0.3 * cm, tamanho_min=5.5)
+    _texto_centralizado(c, cx, y + altura - 1.35 * cm, label_final, "Helvetica", tam_label, COR_TEXTO_SECUNDARIO)
 
     valor_final, tam_valor = _texto_ajustado(c, valor, "Helvetica-Bold", 14, largura - 0.3 * cm, tamanho_min=8)
     _texto_centralizado(c, cx, y + altura - 1.95 * cm, valor_final, "Helvetica-Bold", tam_valor, cor_valor)
@@ -171,9 +178,21 @@ def _desenhar_linha_kpis(c, cards: list[dict], y_topo: float) -> float:
 # ---------------------------------------------------------------------------
 
 def _desenhar_titulo_secao(c, x, y, texto, largura=None, extra_direita=None):
+    """
+    largura, quando informado, também limita a largura do próprio título
+    (reduzindo a fonte se necessário) — evita que um título comprido
+    estoure a borda da coluna quando ela é mais estreita (ex: colunas de
+    38% de largura na página 2). Se extra_direita também for informado,
+    reserva uma fatia da largura pra ele não ficar espremido pelo título.
+    """
+    largura_titulo_max = largura * (0.55 if extra_direita else 1.0) if largura else None
+    titulo_final, tamanho = (
+        _texto_ajustado(c, texto, "Helvetica-Bold", 11, largura_titulo_max, tamanho_min=8.5)
+        if largura_titulo_max else (texto, 11)
+    )
     c.setFillColor(colors.HexColor(COR_TEXTO))
-    c.setFont("Helvetica-Bold", 11)
-    c.drawString(x, y, texto)
+    c.setFont("Helvetica-Bold", tamanho)
+    c.drawString(x, y, titulo_final)
     if extra_direita and largura:
         c.setFillColor(colors.HexColor(COR_TEXTO_SECUNDARIO))
         c.setFont("Helvetica", 8)
@@ -555,13 +574,22 @@ def montar_dashboard_pdf(
     insights: list[dict],
     dica: str,
     data_geracao: str,
+    dados_pagamento: dict | None = None,
 ) -> None:
     """
-    Monta o dashboard de gastos em uma única página A4. Todo o layout é
-    desenhado com coordenadas absolutas (em vez de flowables do Platypus)
-    porque o grid do template de referência é bem específico — é mais
-    simples garantir fidelidade desenhando direto do que tentando encaixar
-    num fluxo automático de parágrafos/tabelas.
+    Monta o dashboard de gastos. Página 1 (categorias) é desenhada por
+    este módulo; se dados_pagamento for informado, uma página 2 (métodos
+    de pagamento) é desenhada em seguida — em uma página nova de verdade
+    (c.showPage()), então nada da página 2 pode aparecer na página 1.
+
+    dados_pagamento, quando informado, precisa ter as chaves:
+    resumo_metodo, n_transacoes, ticket_medio_geral, evolucao_metodo_raw,
+    categoria_metodo_raw, insights.
+
+    Todo o layout é desenhado com coordenadas absolutas (em vez de
+    flowables do Platypus) porque o grid do template de referência é bem
+    específico — é mais simples garantir fidelidade desenhando direto do
+    que tentando encaixar num fluxo automático de parágrafos/tabelas.
     """
     c = canvas_module.Canvas(caminho, pagesize=A4)
     c.setFillColor(colors.white)
@@ -677,5 +705,34 @@ def montar_dashboard_pdf(
     y_apos_resumo = _desenhar_em_resumo(c, insights, y_resumo)
 
     _desenhar_rodape(c, dica, data_geracao, y_apos_resumo)
+
+    if dados_pagamento is not None:
+        # Import local (não no topo do arquivo) para evitar import
+        # circular: dashboard_pagamento.py importa helpers DESTE módulo,
+        # então este módulo não pode importar dashboard_pagamento.py no
+        # nível de topo. c.showPage() fecha a página 1 de vez — nada
+        # desenhado depois disso pode "vazar" para ela.
+        from dashboard_pagamento import desenhar_pagina_metodo_pagamento
+
+        c.showPage()
+        desenhar_pagina_metodo_pagamento(
+            c,
+            mes_ano_titulo,
+            data_inicio,
+            data_fim,
+            total_atual,
+            dados_pagamento["n_transacoes"],
+            dados_pagamento["ticket_medio_geral"],
+            dados_pagamento["resumo_metodo"],
+            resumo_categoria,
+            dados_pagamento["evolucao_metodo_raw"],
+            dados_pagamento["categoria_metodo_raw"],
+            dados_pagamento["insights"],
+            dica,
+            data_geracao,
+            nome_categoria_fn=nome_categoria,
+            icone_categoria_fn=icone_categoria,
+            cor_categoria_fn=cor_categoria,
+        )
 
     c.save()
