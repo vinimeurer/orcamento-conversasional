@@ -1,12 +1,33 @@
 import datetime
 import sys
-from pathlib import Path
+import os
+import tempfile
+import requests
 
 from mcp.server import MCPServer
+
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from db.connection import get_cursor, get_or_create_usuario
+from dashboard_builder import montar_dashboard_pdf
+from dash_style import nome_categoria, nome_metodo_pagamento
+
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+
+MESES_PT = [
+    "", "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+    "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+]
+
+
+def _titulo_periodo(data_inicio: str, data_fim: str) -> str:
+    di = datetime.date.fromisoformat(data_inicio)
+    df = datetime.date.fromisoformat(data_fim)
+    if di.year == df.year and di.month == df.month:
+        return f"{MESES_PT[di.month].upper()} / {di.year}"
+    return f"{di.strftime('%d/%m/%Y')} A {df.strftime('%d/%m/%Y')}"
 
 server = MCPServer(
     name="orcamento-despesas",
@@ -30,6 +51,22 @@ CATEGORIAS_VALIDAS = (
     "outros",
 )
 
+# Mantido no mesmo padrão de CATEGORIAS_VALIDAS, pro agente saber quais
+# valores são aceitos antes mesmo de tentar chamar a tool.
+METODOS_PAGAMENTO_VALIDOS = (
+    "pix",
+    "debito",
+    "credito",
+    "dinheiro",
+    "boleto",
+    "debito_automatico",
+    "faturamento",
+    "ted",
+    "vale_refeicao",
+    "vale_alimentacao",
+    "outros"
+)
+
 
 @server.tool()
 def registrar_despesa(
@@ -37,7 +74,7 @@ def registrar_despesa(
     valor: float,
     descricao: str,
     categoria: str,
-    forma_pagamento: str | None = None,
+    metodo_pagamento: str,
     data_despesa: str | None = None,
     mensagem_original: str | None = None,
 ) -> dict:
@@ -51,7 +88,14 @@ def registrar_despesa(
         descricao: descrição curta do gasto (ex: "almoço", "uber").
         categoria: uma das categorias válidas; use "outros" se não tiver
             certeza.
-        forma_pagamento: opcional, ex. "cartão", "pix", "dinheiro".
+        metodo_pagamento: OBRIGATÓRIO — um destes valores exatos: "pix",
+            "debito", "credito", "dinheiro", "boleto",
+            "debito_automatico", "faturamento", "ted", "vale_refeicao",
+            "vale_alimentacao" ou "outros". Se o usuário não informar como
+            pagou, pergunte antes de chamar esta ferramenta — nunca chame
+            sem esse dado. Se ele informar um método que não bate com
+            nenhum desses claramente, use "outros" (não invente nem force
+            um dos específicos).
         data_despesa: data no formato YYYY-MM-DD; se omitida, usa hoje.
         mensagem_original: texto original enviado pelo usuário, para
             auditoria e futura correção manual.
@@ -62,6 +106,10 @@ def registrar_despesa(
     categoria_normalizada = categoria.strip().lower()
     if categoria_normalizada not in CATEGORIAS_VALIDAS:
         categoria_normalizada = "outros"
+
+    metodo_normalizado = metodo_pagamento.strip().lower()
+    if metodo_normalizado not in METODOS_PAGAMENTO_VALIDOS:
+        metodo_normalizado = "outros"
 
     data_final = data_despesa or datetime.date.today().isoformat()
 
@@ -75,10 +123,16 @@ def registrar_despesa(
         categoria_id = cur.fetchone()["id"]
 
         cur.execute(
+            "SELECT id FROM metodo_pagamento WHERE nome = %s",
+            (metodo_normalizado,),
+        )
+        metodo_pagamento_id = cur.fetchone()["id"]
+
+        cur.execute(
             """
             INSERT INTO despesas
                 (usuario_id, valor, descricao, categoria_id,
-                 forma_pagamento, data_despesa, mensagem_original)
+                 metodo_pagamento_id, data_despesa, mensagem_original)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
@@ -87,7 +141,7 @@ def registrar_despesa(
                 valor,
                 descricao,
                 categoria_id,
-                forma_pagamento,
+                metodo_pagamento_id,
                 data_final,
                 mensagem_original,
             ),
@@ -100,6 +154,7 @@ def registrar_despesa(
         "valor": valor,
         "descricao": descricao,
         "categoria": categoria_normalizada,
+        "metodo_pagamento": metodo_normalizado,
         "data_despesa": data_final,
     }
 
@@ -125,9 +180,10 @@ def listar_despesas(
 
     query = """
         SELECT d.id, d.valor, d.descricao, c.nome AS categoria,
-               d.forma_pagamento, d.data_despesa
+               mp.nome AS metodo_pagamento, d.data_despesa
         FROM despesas d
         JOIN categorias c ON c.id = d.categoria_id
+        LEFT JOIN metodo_pagamento mp ON mp.id = d.metodo_pagamento_id
         WHERE d.usuario_id = %s
           AND d.data_despesa BETWEEN %s AND %s
     """
@@ -208,6 +264,341 @@ def resumo_por_categoria(
         ],
     }
 
+def _resumo_categoria_periodo(usuario_id: int, data_inicio: str, data_fim: str) -> list[dict]:
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT c.nome AS categoria, SUM(d.valor) AS total
+            FROM despesas d
+            JOIN categorias c ON c.id = d.categoria_id
+            WHERE d.usuario_id = %s AND d.data_despesa BETWEEN %s AND %s
+            GROUP BY c.nome
+            ORDER BY total DESC
+            """,
+            (usuario_id, data_inicio, data_fim),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def _evolucao_diaria(usuario_id: int, data_inicio: str, data_fim: str) -> list[dict]:
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT data_despesa, SUM(valor) AS total
+            FROM despesas
+            WHERE usuario_id = %s AND data_despesa BETWEEN %s AND %s
+            GROUP BY data_despesa
+            ORDER BY data_despesa
+            """,
+            (usuario_id, data_inicio, data_fim),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def _despesas_periodo(usuario_id: int, data_inicio: str, data_fim: str) -> list[dict]:
+    """
+    Busca as despesas individuais do período (não agregadas), usadas nos
+    detalhamentos por categoria, por dia e na tabela completa do relatório
+    em PDF. LEFT JOIN com metodo_pagamento (não INNER) porque essa lista
+    também alimenta a página 1 (onde despesa sem método reconhecido ainda
+    deve aparecer normalmente).
+    """
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT d.valor, d.descricao, c.nome AS categoria,
+                   mp.nome AS metodo_pagamento, d.data_despesa
+            FROM despesas d
+            JOIN categorias c ON c.id = d.categoria_id
+            LEFT JOIN metodo_pagamento mp ON mp.id = d.metodo_pagamento_id
+            WHERE d.usuario_id = %s AND d.data_despesa BETWEEN %s AND %s
+            ORDER BY d.data_despesa ASC
+            """,
+            (usuario_id, data_inicio, data_fim),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def _resumo_metodo_pagamento_periodo(usuario_id: int, data_inicio: str, data_fim: str) -> list[dict]:
+    """
+    Total gasto, quantidade de transações e (implicitamente) ticket médio
+    por método de pagamento no período — usado na página 2 do relatório.
+
+    Usa INNER JOIN com metodo_pagamento de propósito: uma despesa sem
+    método de pagamento reconhecido (só pode acontecer em dado legado, de
+    antes da coluna ser obrigatória) não tem como entrar num panorama "por
+    método de pagamento" — ela simplesmente não aparece aqui, mas continua
+    contabilizada normalmente nos totais da página 1.
+    """
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT mp.nome AS metodo_pagamento, COUNT(d.id) AS transacoes, SUM(d.valor) AS total
+            FROM despesas d
+            JOIN metodo_pagamento mp ON mp.id = d.metodo_pagamento_id
+            WHERE d.usuario_id = %s AND d.data_despesa BETWEEN %s AND %s
+            GROUP BY mp.nome
+            ORDER BY total DESC
+            """,
+            (usuario_id, data_inicio, data_fim),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def _evolucao_por_metodo_periodo(usuario_id: int, data_inicio: str, data_fim: str) -> list[dict]:
+    """Gasto por dia, aberto por método de pagamento (uma linha por
+    combinação dia+método que teve gasto) — usado no gráfico de evolução
+    multi-linha da página 2."""
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT d.data_despesa, mp.nome AS metodo_pagamento, SUM(d.valor) AS total
+            FROM despesas d
+            JOIN metodo_pagamento mp ON mp.id = d.metodo_pagamento_id
+            WHERE d.usuario_id = %s AND d.data_despesa BETWEEN %s AND %s
+            GROUP BY d.data_despesa, mp.nome
+            ORDER BY d.data_despesa
+            """,
+            (usuario_id, data_inicio, data_fim),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def _categoria_por_metodo_periodo(usuario_id: int, data_inicio: str, data_fim: str) -> list[dict]:
+    """Gasto por categoria, aberto por método de pagamento — usado no
+    gráfico de barras empilhadas "categoria x método" da página 2."""
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT c.nome AS categoria, mp.nome AS metodo_pagamento, SUM(d.valor) AS total
+            FROM despesas d
+            JOIN categorias c ON c.id = d.categoria_id
+            JOIN metodo_pagamento mp ON mp.id = d.metodo_pagamento_id
+            WHERE d.usuario_id = %s AND d.data_despesa BETWEEN %s AND %s
+            GROUP BY c.nome, mp.nome
+            ORDER BY c.nome
+            """,
+            (usuario_id, data_inicio, data_fim),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def _enviar_pdf_telegram(telegram_id: int, caminho: str, legenda: str) -> bool:
+    """
+    Envia o PDF diretamente pela API do Telegram (sendDocument), sem
+    depender do Nanobot interpretar um artefato retornado pelo MCP.
+
+    Nota de arquitetura: isso acopla esta tool ao canal Telegram
+    especificamente (RNF45 previa desacoplamento entre agente e
+    ferramentas). Foi uma escolha deliberada — a alternativa (devolver o
+    PDF como recurso MCP e confiar que o Nanobot repassa como anexo) não
+    tem suporte documentado/testado no framework para o tipo "resource"
+    do MCP. Se isso mudar em uma versão futura do Nanobot, esta função
+    pode ser removida e a tool pode voltar a apenas retornar o arquivo.
+    """
+    if not TELEGRAM_TOKEN:
+        return False, "TELEGRAM_TOKEN não está definido no ambiente do servidor MCP."
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
+    try:
+        with open(caminho, "rb") as f:
+            resp = requests.post(
+                url,
+                data={"chat_id": telegram_id, "caption": legenda},
+                files={"document": (os.path.basename(caminho), f, "application/pdf")},
+                timeout=30,
+            )
+        if resp.ok:
+            return True, None
+        return False, f"Telegram respondeu {resp.status_code}: {resp.text[:300]}"
+    except requests.RequestException as exc:
+        # Falha de rede/timeout não pode derrubar a tool inteira — o
+        # chamador trata isso como "não foi possível enviar" e informa
+        # o usuário de forma controlada.
+        return False, f"Erro de rede ao chamar a API do Telegram: {exc}"
+
+
+@server.tool()
+def gerar_relatorio_pdf(
+    telegram_id: int,
+    data_inicio: str,
+    data_fim: str,
+) -> dict:
+    """
+    Gera um dashboard-resumo dos gastos de um único período em PDF, com
+    duas páginas: a primeira com panorama por categoria (KPIs, gastos por
+    categoria, composição, evolução diária e principais gastos), e a
+    segunda com panorama por método de pagamento (KPIs, distribuição por
+    método, resumo por método, evolução diária por método e gastos por
+    categoria x método). A página 2 só é incluída se houver despesas com
+    método de pagamento identificado no período. Não faz comparação com
+    períodos anteriores nem detalhamento registro a registro — é um
+    resumo visual rápido do período (ex: os gastos do mês). Envia o PDF
+    diretamente para o usuário no Telegram.
+
+    IMPORTANTE: data_inicio e data_fim são obrigatórios. Se o usuário
+    pedir um relatório sem informar um período, pergunte o período antes
+    de chamar esta ferramenta — nunca assuma um período por conta própria.
+
+    Args:
+        telegram_id: id numérico do usuário no Telegram.
+        data_inicio: data inicial no formato YYYY-MM-DD, inclusiva.
+        data_fim: data final no formato YYYY-MM-DD, inclusiva.
+    """
+    usuario_id = get_or_create_usuario(telegram_id)
+
+    resumo_categoria = _resumo_categoria_periodo(usuario_id, data_inicio, data_fim)
+    evolucao = _evolucao_diaria(usuario_id, data_inicio, data_fim)
+    despesas = _despesas_periodo(usuario_id, data_inicio, data_fim)
+    total_atual = sum(float(r["total"]) for r in resumo_categoria)
+
+    if not resumo_categoria:
+        return {
+            "sucesso": False,
+            "erro": "Não há despesas registradas nesse período para gerar o relatório.",
+        }
+
+    n_lancamentos = len(despesas)
+    gasto_medio = total_atual / n_lancamentos if n_lancamentos else 0.0
+    despesas_top = sorted(despesas, key=lambda d: -float(d["valor"]))[:5]
+    maior_despesa = despesas_top[0] if despesas_top else None
+
+    categoria_top = resumo_categoria[0]
+    pct_top = float(categoria_top["total"]) / total_atual * 100 if total_atual else 0
+    insights = [
+        dict(
+            icone="pie",
+            texto=(
+                f"{nome_categoria(categoria_top['categoria'])} foi sua maior categoria de "
+                f"gasto, representando {pct_top:.0f}% do total."
+            ),
+        )
+    ]
+
+    top_dias = sorted(evolucao, key=lambda e: -float(e["total"]))[:3]
+    if top_dias:
+        dias_fmt = [d["data_despesa"].strftime("%d/%m") for d in
+                    sorted(top_dias, key=lambda e: e["data_despesa"])]
+        dias_txt = ", ".join(dias_fmt[:-1]) + (" e " + dias_fmt[-1] if len(dias_fmt) > 1 else dias_fmt[0])
+        insights.append(dict(icone="calendar", texto=f"Os dias com maiores gastos foram {dias_txt}."))
+
+    if resumo_categoria:
+        n_top3 = min(3, len(resumo_categoria))
+        top3_pct = sum(float(r["total"]) for r in resumo_categoria[:n_top3]) / total_atual * 100 if total_atual else 0
+        insights.append(dict(
+            icone="pie",
+            texto=f"As {n_top3} maiores categorias representam {top3_pct:.0f}% do total gasto.",
+        ))
+    else:
+        insights.append(dict(
+            icone="pie",
+            texto="Continue acompanhando seus gastos regularmente para manter o controle do orçamento.",
+        ))
+
+    # ---- dados da página 2 (panorama por método de pagamento) ----
+    resumo_metodo = _resumo_metodo_pagamento_periodo(usuario_id, data_inicio, data_fim)
+    dados_pagamento = None
+
+    if resumo_metodo:
+        evolucao_metodo_raw = _evolucao_por_metodo_periodo(usuario_id, data_inicio, data_fim)
+        categoria_metodo_raw = _categoria_por_metodo_periodo(usuario_id, data_inicio, data_fim)
+        n_transacoes_metodo = sum(int(r["transacoes"]) for r in resumo_metodo)
+        total_metodo = sum(float(r["total"]) for r in resumo_metodo)
+        ticket_medio_geral_metodo = total_metodo / n_transacoes_metodo if n_transacoes_metodo else 0.0
+
+        metodo_mais_usado = max(resumo_metodo, key=lambda r: r["transacoes"])
+        pct_mais_usado = (
+            metodo_mais_usado["transacoes"] / n_transacoes_metodo * 100 if n_transacoes_metodo else 0
+        )
+        insights_pagamento = [dict(
+            icone="pie",
+            texto=(
+                f"{nome_metodo_pagamento(metodo_mais_usado['metodo_pagamento'])} foi o meio de "
+                f"pagamento mais utilizado, representando {pct_mais_usado:.0f}% das transações."
+            ),
+        )]
+
+        n_top3_cat = min(3, len(resumo_categoria))
+        if n_top3_cat:
+            nomes_top3 = [nome_categoria(r["categoria"]) for r in resumo_categoria[:n_top3_cat]]
+            pct_top3_cat = (
+                sum(float(r["total"]) for r in resumo_categoria[:n_top3_cat]) / total_atual * 100
+                if total_atual else 0
+            )
+            lista_nomes = ", ".join(nomes_top3[:-1]) + (
+                " e " + nomes_top3[-1] if len(nomes_top3) > 1 else nomes_top3[0]
+            )
+            plural = "categorias" if n_top3_cat > 1 else "categoria"
+            insights_pagamento.append(dict(
+                icone="calendar",
+                texto=f"A{'s' if n_top3_cat > 1 else ''} {plural} {lista_nomes} concentra"
+                      f"{'m' if n_top3_cat > 1 else ''} {pct_top3_cat:.0f}% dos gastos.",
+            ))
+
+        if len(resumo_metodo) >= 2:
+            segundo_metodo = resumo_metodo[1]
+            pct_segundo = float(segundo_metodo["total"]) / total_metodo * 100 if total_metodo else 0
+            insights_pagamento.append(dict(
+                icone="card",
+                texto=(
+                    f"{nome_metodo_pagamento(segundo_metodo['metodo_pagamento'])} foi o segundo meio "
+                    f"mais utilizado, com {pct_segundo:.0f}% do total."
+                ),
+            ))
+        else:
+            insights_pagamento.append(dict(
+                icone="card",
+                texto="Continue diversificando o acompanhamento por método de pagamento.",
+            ))
+
+        dados_pagamento = dict(
+            resumo_metodo=resumo_metodo,
+            n_transacoes=n_transacoes_metodo,
+            ticket_medio_geral=ticket_medio_geral_metodo,
+            evolucao_metodo_raw=evolucao_metodo_raw,
+            categoria_metodo_raw=categoria_metodo_raw,
+            insights=insights_pagamento,
+        )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        caminho_pdf = os.path.join(tmp, f"relatorio_{data_inicio}_a_{data_fim}.pdf")
+        montar_dashboard_pdf(
+            caminho_pdf,
+            _titulo_periodo(data_inicio, data_fim),
+            data_inicio,
+            data_fim,
+            total_atual,
+            n_lancamentos,
+            gasto_medio,
+            resumo_categoria,
+            evolucao,
+            despesas_top,
+            maior_despesa,
+            insights,
+            "revisar seus gastos regularmente é o primeiro passo para conquistar seus objetivos financeiros.",
+            datetime.date.today().strftime("%d/%m/%Y"),
+            dados_pagamento=dados_pagamento,
+            despesas_completas=despesas,
+        )
+
+        legenda = f"Relatório de gastos: {data_inicio} a {data_fim}"
+        enviado, motivo_falha = _enviar_pdf_telegram(telegram_id, caminho_pdf, legenda)
+
+    if not enviado:
+        # O motivo detalhado fica em "detalhe_tecnico" (não em "erro") de
+        # propósito: assim o SOUL.md pode instruir o agente a nunca repetir
+        # esse texto técnico pro usuário (RNF11), mas ele ainda aparece no
+        # log de "Tool call" do Nanobot pra você diagnosticar.
+        return {
+            "sucesso": False,
+            "erro": "O relatório foi gerado, mas não foi possível enviá-lo pelo Telegram.",
+            "detalhe_tecnico": motivo_falha,
+        }
+
+    return {
+        "sucesso": True,
+        "total_gasto": round(total_atual, 2),
+        "periodo": {"inicio": data_inicio, "fim": data_fim},
+    }
 
 if __name__ == "__main__":
     import os
