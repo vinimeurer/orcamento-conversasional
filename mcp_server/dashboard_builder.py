@@ -16,8 +16,9 @@ import icons
 from dash_style import (
     COR_CARD_BORDA, COR_FOOTER_BG, COR_ICONE_BG, COR_INSIGHT_BG,
     COR_PRIMARIA, COR_SECUNDARIA, COR_TEXTO, COR_TEXTO_SECUNDARIO,
-    COR_TITULO, COR_TRILHO_BARRA, cor_categoria, icone_categoria,
-    moeda, nome_categoria,
+    COR_TITULO, COR_TRILHO_BARRA, cor_categoria, cor_metodo_pagamento,
+    icone_categoria, icone_metodo_pagamento, moeda, nome_categoria,
+    nome_metodo_pagamento,
 )
 
 LARGURA, ALTURA = A4
@@ -575,16 +576,24 @@ def montar_dashboard_pdf(
     dica: str,
     data_geracao: str,
     dados_pagamento: dict | None = None,
+    despesas_completas: list[dict] | None = None,
 ) -> None:
     """
     Monta o dashboard de gastos. Página 1 (categorias) é desenhada por
     este módulo; se dados_pagamento for informado, uma página 2 (métodos
-    de pagamento) é desenhada em seguida — em uma página nova de verdade
-    (c.showPage()), então nada da página 2 pode aparecer na página 1.
+    de pagamento) é desenhada em seguida; se despesas_completas for
+    informado, uma página 3 (tabela completa de gastos por dia) é
+    desenhada por último. Cada uma começa numa página nova de verdade
+    (c.showPage()), então nada de uma página pode aparecer na anterior.
 
     dados_pagamento, quando informado, precisa ter as chaves:
     resumo_metodo, n_transacoes, ticket_medio_geral, evolucao_metodo_raw,
     categoria_metodo_raw, insights.
+
+    despesas_completas, quando informado, é a lista crua de despesas do
+    período (valor, descricao, categoria, metodo_pagamento, data_despesa)
+    — a página 3 pode se estender por mais de uma página física de PDF se
+    o período tiver muitas despesas.
 
     Todo o layout é desenhado com coordenadas absolutas (em vez de
     flowables do Platypus) porque o grid do template de referência é bem
@@ -733,6 +742,28 @@ def montar_dashboard_pdf(
             nome_categoria_fn=nome_categoria,
             icone_categoria_fn=icone_categoria,
             cor_categoria_fn=cor_categoria,
+        )
+
+    if despesas_completas is not None:
+        # Mesmo motivo do import local acima (evitar import circular).
+        from dashboard_gastos_dia import desenhar_pagina_gastos_por_dia
+
+        c.showPage()
+        desenhar_pagina_gastos_por_dia(
+            c,
+            mes_ano_titulo,
+            data_inicio,
+            data_fim,
+            despesas_completas,
+            total_atual,
+            data_geracao,
+            dica,
+            nome_categoria_fn=nome_categoria,
+            icone_categoria_fn=icone_categoria,
+            cor_categoria_fn=cor_categoria,
+            nome_metodo_fn=nome_metodo_pagamento,
+            icone_metodo_fn=icone_metodo_pagamento,
+            cor_metodo_fn=cor_metodo_pagamento,
         )
 
     c.save()

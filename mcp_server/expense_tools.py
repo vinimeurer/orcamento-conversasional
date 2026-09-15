@@ -298,14 +298,19 @@ def _evolucao_diaria(usuario_id: int, data_inicio: str, data_fim: str) -> list[d
 def _despesas_periodo(usuario_id: int, data_inicio: str, data_fim: str) -> list[dict]:
     """
     Busca as despesas individuais do período (não agregadas), usadas nos
-    detalhamentos por categoria e por dia do relatório em PDF.
+    detalhamentos por categoria, por dia e na tabela completa do relatório
+    em PDF. LEFT JOIN com metodo_pagamento (não INNER) porque essa lista
+    também alimenta a página 1 (onde despesa sem método reconhecido ainda
+    deve aparecer normalmente).
     """
     with get_cursor() as cur:
         cur.execute(
             """
-            SELECT d.valor, d.descricao, c.nome AS categoria, d.data_despesa
+            SELECT d.valor, d.descricao, c.nome AS categoria,
+                   mp.nome AS metodo_pagamento, d.data_despesa
             FROM despesas d
             JOIN categorias c ON c.id = d.categoria_id
+            LEFT JOIN metodo_pagamento mp ON mp.id = d.metodo_pagamento_id
             WHERE d.usuario_id = %s AND d.data_despesa BETWEEN %s AND %s
             ORDER BY d.data_despesa ASC
             """,
@@ -572,6 +577,7 @@ def gerar_relatorio_pdf(
             "revisar seus gastos regularmente é o primeiro passo para conquistar seus objetivos financeiros.",
             datetime.date.today().strftime("%d/%m/%Y"),
             dados_pagamento=dados_pagamento,
+            despesas_completas=despesas,
         )
 
         legenda = f"Relatório de gastos: {data_inicio} a {data_fim}"
