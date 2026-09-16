@@ -14,6 +14,6 @@ COPY requirements.txt /tmp/requirements.txt
 RUN python -m venv /opt/mcpvenv && \
     /opt/mcpvenv/bin/pip install --no-cache-dir -r /tmp/requirements.txt
 
-EXPOSE 18790
+EXPOSE 8765 18790
 
 CMD ["nanobot", "gateway", "--verbose"]

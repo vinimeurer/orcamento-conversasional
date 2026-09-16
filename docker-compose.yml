@@ -24,9 +24,12 @@ services:
       dockerfile: nanobot_config/Dockerfile
     container_name: orcamento_nanobot
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:8765:8765"
     environment:
       TELEGRAM_TOKEN: ${TELEGRAM_TOKEN}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
+      WEBUI_PASSWORD: ${WEBUI_PASSWORD:-nanobot-local-dev}
       # Default aplicado aqui para o container subir mesmo sem a variável
       # definida no .env (o nanobot falha se ${GEMINI_MODEL} estiver vazio).
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.6-flash}
