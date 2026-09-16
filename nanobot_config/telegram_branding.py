@@ -88,6 +88,8 @@ Pergunte por período ou categoria:
 Receba o dashboard completo:
 <blockquote>Gera meu relatório de agosto</blockquote>
 
+
+
 💬 <b>COMANDOS</b>
 <code>/new</code> — Começar uma nova conversa
 <code>/stop</code> — Parar a resposta atual
@@ -117,6 +119,8 @@ Pergunte por período ou categoria:
 📄 3. RELATÓRIO EM PDF
 Receba o dashboard completo:
 - Gera meu relatório de agosto
+
+
 
 💬 COMANDOS
 /new — Começar uma nova conversa
