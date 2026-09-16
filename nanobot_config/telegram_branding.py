@@ -38,10 +38,9 @@ Receba o dashboard completo:
 
 
 
-▶️ Para rever esta mensagem, envie <code>/start</code>
-❓ Para ajuda com comandos, envie <code>/help</code>"""
+▶️ Para rever esta mensagem, envie <code>/help</code>"""
 
-# Fallback sem formatação (se o Telegram rejeitar o HTML).
+# Fallback sem formatação do /start (se o Telegram rejeitar o HTML).
 START_MESSAGE_TEXT = """👋 Olá! Bem-vindo ao Orçamento Conversacional
 Sou seu assistente financeiro pessoal no Telegram.
 
@@ -64,18 +63,70 @@ Receba o dashboard completo:
 
 
 
-▶️ Para rever esta mensagem, envie /start
-❓ Para ajuda com comandos, envie /help"""
+▶️ Para rever esta mensagem, envie /help"""
 
-HELP_MESSAGE = """💰 Orçamento Conversacional — comandos:
+# /help completo: boas-vindas + como usar + comandos.
+# É o que o usuário vê ao digitar /help no Telegram (HTML) e nos
+# outros canais (texto puro via build_help_text).
+HELP_MESSAGE_HTML = """👋 Olá! Bem-vindo ao <b>Orçamento Conversacional</b>
+Sou seu assistente financeiro pessoal no Telegram.
 
-/start — Ver a mensagem de boas-vindas
+
+
+💰 <b>1. REGISTRAR DESPESAS</b>
+Escreva como você fala:
+<blockquote>Gastei 35 no almoço no pix</blockquote>
+<blockquote>Paguei 120 no mercado no crédito ontem</blockquote>
+<blockquote>Paguei 200 da conta de luz dia 1 do mês passado no débito</blockquote>
+
+🔍 <b>2. CONSULTAR GASTOS</b>
+Pergunte por período ou categoria:
+<blockquote>Quanto gastei em alimentação este mês?</blockquote>
+<blockquote>Quanto gastei entre 01/08 e 15/08?</blockquote>
+
+📄 <b>3. RELATÓRIO EM PDF</b>
+Receba o dashboard completo:
+<blockquote>Gera meu relatório de agosto</blockquote>
+
+💬 <b>COMANDOS</b>
+<code>/new</code> — Começar uma nova conversa
+<code>/stop</code> — Parar a resposta atual
+<code>/history</code> — Ver as últimas mensagens
+<code>/help</code> — Ver esta ajuda
+
+
+
+▶️ Para rever esta mensagem, envie <code>/help</code>"""
+
+HELP_MESSAGE_TEXT = """👋 Olá! Bem-vindo ao Orçamento Conversacional
+Sou seu assistente financeiro pessoal no Telegram.
+
+
+
+💰 1. REGISTRAR DESPESAS
+Escreva como você fala:
+- Gastei 35 no almoço no pix
+- Paguei 120 no mercado no crédito ontem
+- Paguei 200 da conta de luz dia 1 do mês passado no débito
+
+🔍 2. CONSULTAR GASTOS
+Pergunte por período ou categoria:
+- Quanto gastei em alimentação este mês?
+- Quanto gastei entre 01/08 e 15/08?
+
+📄 3. RELATÓRIO EM PDF
+Receba o dashboard completo:
+- Gera meu relatório de agosto
+
+💬 COMANDOS
 /new — Começar uma nova conversa
 /stop — Parar a resposta atual
 /history — Ver as últimas mensagens
 /help — Ver esta ajuda
 
-É só escrever como você fala. Ex.: "Gastei 35 no almoço no pix"."""
+
+
+▶️ Para rever esta mensagem, envie /help"""
 
 BRANDING_MARKER = "# ORCAMENTO-CONVERSACIONAL-BRANDING"
 
@@ -145,11 +196,10 @@ def patch_bot_commands(runtime_path: pathlib.Path) -> None:
     const_block = (
         f"\n\n{BRANDING_MARKER}\n"
         "ORCAMENTO_BOT_COMMANDS = [\n"
-        '    BotCommand("start", "Ver boas-vindas"),\n'
+        '    BotCommand("help", "Ver ajuda"),\n'
         '    BotCommand("new", "Começar nova conversa"),\n'
         '    BotCommand("stop", "Parar resposta atual"),\n'
         '    BotCommand("history", "Ver mensagens recentes"),\n'
-        '    BotCommand("help", "Ver ajuda"),\n'
         "]\n\n\n"
     )
     anchor = "class TelegramChannel(BaseChannel):"
@@ -159,6 +209,12 @@ def patch_bot_commands(runtime_path: pathlib.Path) -> None:
 
 
 def patch_help_text(builtin_path: pathlib.Path) -> None:
+    """O /help (outros canais) mostra boas-vindas + como usar + comandos.
+
+    Aqui o build_help_text passa a retornar HELP_MESSAGE_TEXT para
+    CLI/WebUI/outros canais não mostrarem mais a lista admin do nanobot.
+    No Telegram vale o HTML via patch_help_handler.
+    """
     text = builtin_path.read_text(encoding="utf-8")
     if "ORCAMENTO_HELP_MESSAGE" in text:
         print("[branding] /help já patcheado, pulando.")
@@ -187,7 +243,7 @@ def patch_help_text(builtin_path: pathlib.Path) -> None:
         )
     new_fn = (
         f'{BRANDING_MARKER}\n'
-        f'ORCAMENTO_HELP_MESSAGE = """\n{HELP_MESSAGE}\n"""\n\n\n'
+        f'ORCAMENTO_HELP_MESSAGE = """\n{HELP_MESSAGE_TEXT}\n"""\n\n\n'
         "def build_help_text() -> str:\n"
         '    """Build canonical help text shared across channels."""\n'
         "    return ORCAMENTO_HELP_MESSAGE\n"
@@ -195,7 +251,43 @@ def patch_help_text(builtin_path: pathlib.Path) -> None:
     )
     text = text[:old_fn_start] + new_fn + text[old_fn_start + end_offset :]
     builtin_path.write_text(text, encoding="utf-8")
-    print("[branding] /help patcheado.")
+    print("[branding] /help patcheado (boas-vindas + comandos).")
+
+
+def patch_help_handler(runtime_path: pathlib.Path) -> None:
+    """Faz o /help no Telegram enviar o HTML completo (boas-vindas + comandos).
+
+    O build_help_text (texto puro) continua valendo para CLI/WebUI e como
+    fallback se o Telegram rejeitar o HTML.
+    """
+    text = runtime_path.read_text(encoding="utf-8")
+    old_call = "        await update.message.reply_text(build_help_text())"
+    if old_call not in text:
+        if "ORCAMENTO_HELP_MESSAGE_HTML" in text:
+            print("[branding] handler do /help já patcheado, pulando.")
+            return
+        raise SystemExit(
+            "[branding] chamada do _on_help não encontrada — "
+            "versão do nanobot mudou? Revise telegram_branding.py. "
+            f"Arquivo: {runtime_path}"
+        )
+    new_call = '''        try:
+            await update.message.reply_text(
+                ORCAMENTO_HELP_MESSAGE_HTML, parse_mode="HTML"
+            )
+        except BadRequest:
+            await update.message.reply_text(build_help_text())'''
+    text = text.replace(old_call, new_call, 1)
+    const_block = (
+        f"{BRANDING_MARKER}-HELP\n"
+        f'ORCAMENTO_HELP_MESSAGE_HTML = """\n{HELP_MESSAGE_HTML}\n"""\n\n\n'
+    )
+    anchor = "class TelegramChannel(BaseChannel):"
+    if anchor not in text:
+        raise SystemExit("[branding] anchor TelegramChannel não encontrado.")
+    text = text.replace(anchor, const_block + anchor, 1)
+    runtime_path.write_text(text, encoding="utf-8")
+    print("[branding] handler do /help patcheado (HTML completo).")
 
 
 def main() -> None:
@@ -206,6 +298,7 @@ def main() -> None:
     patch_start_message(runtime_path)
     # Re-lê porque o arquivo mudou no passo anterior.
     patch_bot_commands(_site_file("channels", "telegram", "runtime.py"))
+    patch_help_handler(_site_file("channels", "telegram", "runtime.py"))
     patch_help_text(builtin_path)
     # Validação só por texto: importar runtime.py aqui exigiria a dep
     # opcional `python-telegram-bot`, que só é instalada no primeiro
@@ -216,15 +309,19 @@ def main() -> None:
     builtin_text = _site_file("command", "builtin.py").read_text(encoding="utf-8")
     assert "ORCAMENTO_START_MESSAGE_HTML" in runtime_text
     assert "ORCAMENTO_START_MESSAGE_TEXT" in runtime_text
+    assert "ORCAMENTO_HELP_MESSAGE_HTML" in runtime_text
     assert '<blockquote>' in runtime_text
-    assert 'parse_mode="HTML"' in runtime_text
+    assert 'ORCAMENTO_START_MESSAGE_HTML, parse_mode="HTML"' in runtime_text
+    assert 'ORCAMENTO_HELP_MESSAGE_HTML, parse_mode="HTML"' in runtime_text
     assert "Orçamento Conversacional" in runtime_text
     assert "ORCAMENTO_BOT_COMMANDS" in runtime_text
+    assert 'BotCommand("start"' not in runtime_text
     assert "ORCAMENTO_HELP_MESSAGE" in builtin_text
     assert "Orçamento Conversacional" in builtin_text
+    assert "COMANDOS" in builtin_text
     assert "Hi {user.first_name}! I'm nanobot." not in runtime_text
     assert "nanobot commands:" not in builtin_text
-    print("[branding] OK: /start HTML + /help + menu validados.")
+    print("[branding] OK: /start curto, /help completo, menu sem /start.")
 
 
 if __name__ == "__main__":
