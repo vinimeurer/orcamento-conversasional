@@ -4,7 +4,13 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends git curl ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir nanobot-ai
+RUN pip install --no-cache-dir nanobot-ai==0.3.0
+
+# Branding Orçamento Conversacional: /start, menu e /help do Telegram são
+# hardcoded no nanobot e sem opção oficial de config. O script falha alto
+# se o upstream mudar — ao subir a versão, revise telegram_branding.py.
+COPY nanobot_config/telegram_branding.py /tmp/telegram_branding.py
+RUN python /tmp/telegram_branding.py
 
 # Dependências do servidor MCP (executado via stdio dentro deste container)
 # em venv isolado: o expense_tools.py usa o SDK mcp 2.x, mas o nanobot
