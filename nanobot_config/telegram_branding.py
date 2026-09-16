@@ -16,13 +16,42 @@ from __future__ import annotations
 import pathlib
 import sys
 
-START_MESSAGE = """👋 Olá! Bem-vindo ao Orçamento Conversacional
+START_MESSAGE_HTML = """👋 Olá! Bem-vindo ao <b>Orçamento Conversacional</b>
 Sou seu assistente financeiro pessoal no Telegram.
+
+
+
+💰 <b>1. REGISTRAR DESPESAS</b>
+Escreva como você fala:
+<blockquote>Gastei 35 no almoço no pix</blockquote>
+<blockquote>Paguei 120 no mercado no crédito ontem</blockquote>
+<blockquote>Paguei 200 da conta de luz dia 1 do mês passado no débito</blockquote>
+
+🔍 <b>2. CONSULTAR GASTOS</b>
+Pergunte por período ou categoria:
+<blockquote>Quanto gastei em alimentação este mês?</blockquote>
+<blockquote>Quanto gastei entre 01/08 e 15/08?</blockquote>
+
+📄 <b>3. RELATÓRIO EM PDF</b>
+Receba o dashboard completo:
+<blockquote>Gera meu relatório de agosto</blockquote>
+
+
+
+▶️ Para rever esta mensagem, envie <code>/start</code>
+❓ Para ajuda com comandos, envie <code>/help</code>"""
+
+# Fallback sem formatação (se o Telegram rejeitar o HTML).
+START_MESSAGE_TEXT = """👋 Olá! Bem-vindo ao Orçamento Conversacional
+Sou seu assistente financeiro pessoal no Telegram.
+
+
 
 💰 1. REGISTRAR DESPESAS
 Escreva como você fala:
 - Gastei 35 no almoço no pix
 - Paguei 120 no mercado no crédito ontem
+- Paguei 200 da conta de luz dia 1 do mês passado no débito
 
 🔍 2. CONSULTAR GASTOS
 Pergunte por período ou categoria:
@@ -33,7 +62,10 @@ Pergunte por período ou categoria:
 Receba o dashboard completo:
 - Gera meu relatório de agosto
 
-▶️ Para rever esta mensagem, envie /start"""
+
+
+▶️ Para rever esta mensagem, envie /start
+❓ Para ajuda com comandos, envie /help"""
 
 HELP_MESSAGE = """💰 Orçamento Conversacional — comandos:
 
@@ -65,8 +97,8 @@ def patch_start_message(runtime_path: pathlib.Path) -> None:
             "Send me a message and I'll respond!\\n"
             "Type /help to see available commands."
         )'''
-    if BRANDING_MARKER in text and "ORCAMENTO_START_MESSAGE" in text:
-        print("[branding] /start já patcheado, pulando.")
+    if "ORCAMENTO_START_MESSAGE_HTML" in text:
+        print("[branding] /start já patcheado (HTML), pulando.")
         return
     if old_block not in text:
         raise SystemExit(
@@ -74,17 +106,26 @@ def patch_start_message(runtime_path: pathlib.Path) -> None:
             "versão do nanobot mudou? Revise telegram_branding.py. "
             f"Arquivo: {runtime_path}"
         )
-    new_block = '''        await update.message.reply_text(ORCAMENTO_START_MESSAGE)'''
+    new_block = '''        try:
+            await update.message.reply_text(
+                ORCAMENTO_START_MESSAGE_HTML, parse_mode="HTML"
+            )
+        except BadRequest:
+            await update.message.reply_text(ORCAMENTO_START_MESSAGE_TEXT)'''
     text = text.replace(old_block, new_block)
 
-    const_block = f'{BRANDING_MARKER}\nORCAMENTO_START_MESSAGE = """\n{START_MESSAGE}\n"""\n\n\n'
+    const_block = (
+        f"{BRANDING_MARKER}\n"
+        f'ORCAMENTO_START_MESSAGE_HTML = """\n{START_MESSAGE_HTML}\n"""\n\n'
+        f'ORCAMENTO_START_MESSAGE_TEXT = """\n{START_MESSAGE_TEXT}\n"""\n\n\n'
+    )
     # Insere após os imports (antes de "class TelegramChannel").
     anchor = "class TelegramChannel(BaseChannel):"
     if anchor not in text:
         raise SystemExit("[branding] anchor TelegramChannel não encontrado.")
     text = text.replace(anchor, const_block + anchor, 1)
     runtime_path.write_text(text, encoding="utf-8")
-    print("[branding] /start patcheado.")
+    print("[branding] /start patcheado (HTML + fallback).")
 
 
 def patch_bot_commands(runtime_path: pathlib.Path) -> None:
@@ -173,14 +214,17 @@ def main() -> None:
         encoding="utf-8"
     )
     builtin_text = _site_file("command", "builtin.py").read_text(encoding="utf-8")
-    assert "ORCAMENTO_START_MESSAGE" in runtime_text
+    assert "ORCAMENTO_START_MESSAGE_HTML" in runtime_text
+    assert "ORCAMENTO_START_MESSAGE_TEXT" in runtime_text
+    assert '<blockquote>' in runtime_text
+    assert 'parse_mode="HTML"' in runtime_text
     assert "Orçamento Conversacional" in runtime_text
     assert "ORCAMENTO_BOT_COMMANDS" in runtime_text
     assert "ORCAMENTO_HELP_MESSAGE" in builtin_text
     assert "Orçamento Conversacional" in builtin_text
     assert "Hi {user.first_name}! I'm nanobot." not in runtime_text
     assert "nanobot commands:" not in builtin_text
-    print("[branding] OK: /start + /help + menu validados.")
+    print("[branding] OK: /start HTML + /help + menu validados.")
 
 
 if __name__ == "__main__":
