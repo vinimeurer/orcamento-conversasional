@@ -15,6 +15,8 @@ from dashboard_builder import montar_dashboard_pdf
 from dash_style import nome_categoria, nome_metodo_pagamento
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL")
 
 MESES_PT = [
     "", "janeiro", "fevereiro", "março", "abril", "maio", "junho",
@@ -417,6 +419,51 @@ def _enviar_pdf_telegram(telegram_id: int, caminho: str, legenda: str) -> bool:
         return False, f"Erro de rede ao chamar a API do Telegram: {exc}"
 
 
+def _chamar_gemini(prompt: str, max_tokens: int = 500) -> tuple[str | None, str | None]:
+    """
+    Chama a API do Gemini diretamente, fora do loop conversacional normal
+    do agente — usada só pela geração de recomendações financeiras
+    (RF31-RF33 do levantamento de requisitos: consolidar dados e enviar
+    para um modelo de linguagem processar).
+
+    Por que uma chamada separada em vez de deixar o próprio agente gerar
+    a recomendação na resposta normal: assim o prompt de análise fica
+    isolado, com instruções e tom específicos para essa tarefa, sem
+    misturar com as instruções de extração/registro do SOUL.md — e o
+    resultado já sai pronto para o agente só repassar.
+
+    Retorna (texto, motivo_falha). Mesmo padrão de _enviar_pdf_telegram:
+    só um dos dois vem preenchido.
+    """
+    if not GEMINI_API_KEY:
+        return None, "GEMINI_API_KEY não está definida no ambiente do servidor MCP."
+
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+    )
+    corpo = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.6, "maxOutputTokens": max_tokens},
+    }
+
+    try:
+        resp = requests.post(url, json=corpo, timeout=30)
+    except requests.RequestException as exc:
+        return None, f"Erro de rede ao chamar a API do Gemini: {exc}"
+
+    if not resp.ok:
+        return None, f"Gemini respondeu {resp.status_code}: {resp.text[:300]}"
+
+    try:
+        dados = resp.json()
+        texto = dados["candidates"][0]["content"]["parts"][0]["text"]
+    except (KeyError, IndexError, ValueError) as exc:
+        return None, f"Resposta inesperada da API do Gemini: {exc}"
+
+    return texto.strip(), None
+
+
 @server.tool()
 def gerar_relatorio_pdf(
     telegram_id: int,
@@ -599,6 +646,108 @@ def gerar_relatorio_pdf(
         "total_gasto": round(total_atual, 2),
         "periodo": {"inicio": data_inicio, "fim": data_fim},
     }
+
+
+@server.tool()
+def gerar_recomendacao_financeira(
+    telegram_id: int,
+    data_inicio: str,
+    data_fim: str,
+) -> dict:
+    """
+    Gera de 2 a 4 recomendações financeiras personalizadas, com base nos
+    gastos do período informado. Consolida os dados (total, distribuição
+    por categoria, maior despesa, distribuição por método de pagamento) e
+    faz uma chamada dedicada à API do Gemini para produzir o texto —
+    diferente de gerar_relatorio_pdf, essa tool NÃO envia arquivo nenhum:
+    o resultado é só texto, para você repassar na sua própria resposta.
+
+    IMPORTANTE: data_inicio e data_fim são obrigatórios. Se um período já
+    foi usado recentemente NESTA MESMA CONVERSA (por exemplo, para gerar
+    um relatório ou responder uma consulta), reutilize esse período em vez
+    de perguntar de novo. Caso contrário — primeira vez que o assunto
+    aparece, ou o único período mencionado foi há muito tempo na conversa
+    — pergunte o período antes de chamar esta ferramenta.
+
+    Args:
+        telegram_id: id numérico do usuário no Telegram.
+        data_inicio: data inicial no formato YYYY-MM-DD, inclusiva.
+        data_fim: data final no formato YYYY-MM-DD, inclusiva.
+    """
+    usuario_id = get_or_create_usuario(telegram_id)
+
+    resumo_categoria = _resumo_categoria_periodo(usuario_id, data_inicio, data_fim)
+    if not resumo_categoria:
+        return {
+            "sucesso": False,
+            "erro": "Não há despesas registradas nesse período para gerar uma recomendação.",
+        }
+
+    resumo_metodo = _resumo_metodo_pagamento_periodo(usuario_id, data_inicio, data_fim)
+    despesas = _despesas_periodo(usuario_id, data_inicio, data_fim)
+
+    total = sum(float(r["total"]) for r in resumo_categoria)
+    n_despesas = len(despesas)
+    dias_periodo = (
+        datetime.date.fromisoformat(data_fim) - datetime.date.fromisoformat(data_inicio)
+    ).days + 1
+    media_diaria = total / dias_periodo if dias_periodo else 0
+
+    maior_despesa = max(despesas, key=lambda d: float(d["valor"])) if despesas else None
+    maior_despesa_txt = (
+        f"{maior_despesa['descricao']} — R$ {float(maior_despesa['valor']):.2f} "
+        f"({nome_categoria(maior_despesa['categoria'])})"
+        if maior_despesa else "Não disponível."
+    )
+
+    linhas_categoria = "\n".join(
+        f"- {nome_categoria(r['categoria'])}: R$ {float(r['total']):.2f} "
+        f"({float(r['total']) / total * 100:.0f}%)"
+        for r in resumo_categoria
+    )
+    linhas_metodo = (
+        "\n".join(
+            f"- {nome_metodo_pagamento(r['metodo_pagamento'])}: R$ {float(r['total']):.2f} "
+            f"({float(r['total']) / total * 100:.0f}%)"
+            for r in resumo_metodo
+        )
+        if resumo_metodo else "Não informado."
+    )
+
+    prompt = f"""Você é um assistente financeiro que ajuda jovens adultos brasileiros a organizarem melhor os próprios gastos.
+
+Com base nos dados abaixo, gere de 2 a 4 recomendações práticas, específicas e acionáveis para essa pessoa economizar ou organizar melhor as finanças no período analisado. Seja direto e objetivo. Baseie as recomendações SOMENTE nos dados fornecidos — não invente informações nem valores que não estão aqui. Não dê conselhos de investimento. Termine com uma frase curta deixando claro que a recomendação tem caráter informativo e não substitui aconselhamento financeiro profissional.
+
+Período: {data_inicio} a {data_fim}
+Total gasto: R$ {total:.2f}
+Número de despesas registradas: {n_despesas}
+Média de gasto por dia: R$ {media_diaria:.2f}
+
+Distribuição por categoria:
+{linhas_categoria}
+
+Maior despesa individual: {maior_despesa_txt}
+
+Distribuição por método de pagamento:
+{linhas_metodo}
+
+Responda em português do Brasil, em texto corrido curto ou lista de poucos itens, sem markdown pesado (sem blocos de código, sem títulos com #)."""
+
+    texto, motivo_falha = _chamar_gemini(prompt)
+
+    if not texto:
+        return {
+            "sucesso": False,
+            "erro": "Não foi possível gerar a recomendação agora. Tente novamente em instantes.",
+            "detalhe_tecnico": motivo_falha,
+        }
+
+    return {
+        "sucesso": True,
+        "recomendacao": texto,
+        "periodo": {"inicio": data_inicio, "fim": data_fim},
+    }
+
 
 if __name__ == "__main__":
     import os
