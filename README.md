@@ -1,6 +1,39 @@
-# 💬 Orçamento Conversacional
+# 💬 Orçamento Conversacional — Gestão financeira pessoal por linguagem natural, direto no Telegram
 
-**Gestão financeira pessoal por linguagem natural, direto no Telegram.**
+<p align="center">
+  <picture>
+    <source
+      media="(prefers-color-scheme: dark)"
+      srcset="https://raw.githubusercontent.com/vinimeurer/orcamento-conversasional/main/docs/assets/banner-dark.png">
+    <source
+      media="(prefers-color-scheme: light)"
+      srcset="https://raw.githubusercontent.com/vinimeurer/orcamento-conversasional/main/docs/assets/banner-light.png">
+    <img
+      src="https://raw.githubusercontent.com/vinimeurer/orcamento-conversasional/main/docs/assets/banner-light.png"
+      alt="Orçamento Conversacional — Gestão financeira pessoal por linguagem natural">
+  </picture>
+</p>
+
+<p align="center">
+  <a href="https://www.python.org/">
+    <img src="https://img.shields.io/badge/Python-3.x-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python">
+  </a>
+  <a href="https://www.docker.com/">
+    <img src="https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker Compose">
+  </a>
+  <a href="https://www.postgresql.org/">
+    <img src="https://img.shields.io/badge/PostgreSQL-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL">
+  </a>
+  <a href="https://ai.google.dev/">
+    <img src="https://img.shields.io/badge/Gemini-8E75B2?style=flat-square&logo=googlegemini&logoColor=white" alt="Google Gemini">
+  </a>
+  <a href="https://modelcontextprotocol.io/">
+    <img src="https://img.shields.io/badge/MCP-5A5A5A?style=flat-square" alt="Model Context Protocol">
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License: MIT">
+  </a>
+</p>
 
 Registre despesas como quem manda mensagem para um amigo — sem formulário, sem planilha. Um agente de IA (Google Gemini, orquestrado pelo [Nanobot](https://github.com/HKUDS/nanobot)) interpreta a mensagem, extrai valor, categoria, método de pagamento e data, e grava tudo em um banco PostgreSQL. Quando você quiser, ele te devolve um relatório em PDF com dashboard completo.
 
@@ -8,8 +41,6 @@ Registre despesas como quem manda mensagem para um amigo — sem formulário, se
 Você:  Gastei 35 no almoço hoje, no pix
 Bot:   Registrado: R$ 35,00 em alimentação (almoço, no pix).
 ```
-
----
 
 ## Índice
 
@@ -21,10 +52,7 @@ Bot:   Registrado: R$ 35,00 em alimentação (almoço, no pix).
 - [Comandos](#comandos)
 - [Estrutura do Projeto](#estrutura-do-projeto)
 - [Documentação Técnica](#documentação-técnica)
-- [Roadmap](#roadmap)
 - [Licença](#licença)
-
----
 
 ## Visão Geral
 
