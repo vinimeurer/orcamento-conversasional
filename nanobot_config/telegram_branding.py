@@ -36,6 +36,11 @@ Pergunte por período ou categoria:
 Receba o dashboard completo:
 <blockquote>Gera meu relatório de agosto</blockquote>
 
+💡 <b>4. RECOMENDAÇÕES FINANCEIRAS</b>
+Peça dicas para economizar:
+<blockquote>Como posso economizar este mês?</blockquote>
+<blockquote>Onde eu poderia economizar entre 01/08 e 31/08?</blockquote>
+
 
 
 ▶️ Para rever esta mensagem, envie <code>/help</code>"""
@@ -60,6 +65,11 @@ Pergunte por período ou categoria:
 📄 3. RELATÓRIO EM PDF
 Receba o dashboard completo:
 - Gera meu relatório de agosto
+
+💡 4. RECOMENDAÇÕES FINANCEIRAS
+Peça dicas para economizar:
+- Como posso economizar este mês?
+- Onde eu poderia economizar entre 01/08 e 31/08?
 
 
 
@@ -87,6 +97,11 @@ Pergunte por período ou categoria:
 📄 <b>3. RELATÓRIO EM PDF</b>
 Receba o dashboard completo:
 <blockquote>Gera meu relatório de agosto</blockquote>
+
+💡 <b>4. RECOMENDAÇÕES FINANCEIRAS</b>
+Peça dicas para economizar:
+<blockquote>Como posso economizar este mês?</blockquote>
+<blockquote>Onde eu poderia economizar entre 01/08 e 31/08?</blockquote>
 
 
 
@@ -119,6 +134,11 @@ Pergunte por período ou categoria:
 📄 3. RELATÓRIO EM PDF
 Receba o dashboard completo:
 - Gera meu relatório de agosto
+
+💡 4. RECOMENDAÇÕES FINANCEIRAS
+Peça dicas para economizar:
+- Como posso economizar este mês?
+- Onde eu poderia economizar entre 01/08 e 31/08?
 
 
 
