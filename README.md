@@ -35,7 +35,7 @@
   </a>
 </p>
 
-Registre despesas como quem manda mensagem para um amigo — sem formulário, sem planilha. Um agente de IA (Google Gemini, orquestrado pelo [Nanobot](https://github.com/HKUDS/nanobot)) interpreta a mensagem, extrai valor, categoria, método de pagamento e data, e grava tudo em um banco PostgreSQL. Quando você quiser, ele te devolve um relatório em PDF com dashboard completo.
+Registre despesas como quem manda mensagem para um amigo — sem formulário, sem planilha. Um agente de IA (Google Gemini, orquestrado pelo [Nanobot](https://github.com/HKUDS/nanobot)) interpreta a mensagem, extrai valor, categoria, método de pagamento e data, e grava tudo em um banco PostgreSQL. Quando você quiser, ele te devolve um relatório em PDF com dashboard completo ou gera recomendações financeiras personalizadas para economizar.
 
 ```
 Você:  Gastei 35 no almoço hoje, no pix
@@ -68,6 +68,7 @@ Todo o pipeline roda em containers Docker — não é preciso instalar Python, P
 | 🔍 **Consultas em linguagem natural** | "Quanto gastei em alimentação esse mês?", "Quanto gastei entre 01/08 e 15/08?" |
 | 📊 **Resumo por categoria** | Total e participação percentual de cada categoria num período |
 | 📄 **Relatório em PDF (dashboard, 3 páginas)** | Enviado direto no Telegram: **(1)** panorama por categoria, **(2)** panorama por método de pagamento, **(3)** tabela detalhada de gastos por dia |
+| 💡 **Recomendações financeiras** | "Como posso economizar este mês?", "Onde eu poderia economizar entre 01/08 e 31/08?" — 2 a 4 dicas práticas geradas a partir dos gastos do período, só texto no chat |
 
 ## Arquitetura
 
@@ -78,7 +79,7 @@ Todo o pipeline roda em containers Docker — não é preciso instalar Python, P
 | Canal | Telegram Bot API | Entrada e saída das mensagens |
 | Orquestração | [Nanobot](https://github.com/HKUDS/nanobot) | Conecta canal, modelo e ferramentas |
 | Modelo de linguagem | Google Gemini (API) | Interpretação e geração de respostas |
-| Ferramentas | Protocolo MCP, Python | Regras de negócio (registro, consulta, relatório) |
+| Ferramentas | Protocolo MCP, Python | Regras de negócio (registro, consulta, relatório, recomendações) |
 | Persistência | PostgreSQL | Armazenamento estruturado |
 | Geração de PDF | ReportLab + Matplotlib | Dashboard do relatório |
 | Empacotamento | Docker Compose | Orquestra os containers `postgres` e `nanobot` |
@@ -150,8 +151,8 @@ orcamento-conversacional/
 │   ├── migration_002_metodo_pagamento.sql   # Migração segura para bancos já existentes
 │   └── connection.py         # Pool de conexão com o Postgres
 │
-├── mcp_server/               # Ferramentas do agente + geração do relatório PDF
-│   ├── expense_tools.py       # As 4 tools: registrar, listar, resumir, gerar PDF
+├── mcp_server/               # Ferramentas do agente + geração de relatório PDF e recomendações
+│   ├── expense_tools.py       # As 5 tools: registrar, listar, resumir, gerar PDF, gerar recomendação
 │   ├── dashboard_builder.py   # Página 1 do relatório (panorama por categoria)
 │   ├── dashboard_pagamento.py # Página 2 do relatório (panorama por método de pagamento)
 │   ├── dashboard_gastos_dia.py# Página 3 do relatório (tabela de gastos por dia)
