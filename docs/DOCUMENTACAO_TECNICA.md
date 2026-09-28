@@ -183,7 +183,8 @@ MCP: registered tool 'mcp_orcamento_registrar_despesa' from server 'orcamento'
 MCP: registered tool 'mcp_orcamento_listar_despesas' from server 'orcamento'
 MCP: registered tool 'mcp_orcamento_resumo_por_categoria' from server 'orcamento'
 MCP: registered tool 'mcp_orcamento_gerar_relatorio_pdf' from server 'orcamento'
-MCP server 'orcamento': connected, 4 capabilities registered
+MCP: registered tool 'mcp_orcamento_gerar_recomendacao_financeira' from server 'orcamento'
+MCP server 'orcamento': connected, 5 capabilities registered
 ✓ Health endpoint: http://127.0.0.1:18790/health
 bot @seubot connected
 ```
@@ -222,6 +223,19 @@ a seção [8. Problemas comuns](#8-problemas-comuns-e-como-resolver).
    Se você não informar o período, o agente vai perguntar — o período é
    obrigatório para gerar o relatório. Em alguns segundos, você recebe um
    PDF de 3 páginas anexado na conversa.
+
+6. Para testar as recomendações, envie algo como:
+
+   ```
+   Como posso economizar em setembro?
+   ```
+
+   Se você não informar o período e nenhum período tiver sido usado há
+   pouco na conversa, o agente vai perguntar — o período é obrigatório
+   para gerar a recomendação. Em alguns segundos, você recebe de 2 a 4
+   dicas em texto direto no chat (sem arquivo). Se você acabou de pedir
+   um relatório ou fez uma consulta com um período há pouco, ele
+   reutiliza esse período automaticamente.
 
 Se o bot não responder nada, veja a seção de problemas comuns abaixo.
 
@@ -327,6 +341,16 @@ chegou até o processo do servidor MCP (confira o bloco `env` do serviço
 `orcamento` em `config.docker.json`) ou uma falha de rede pontual ao
 chamar a API do Telegram.
 
+### As recomendações não vêm / erro ao gerar dica
+
+- Se o bot disser que não há despesas no período, é literal: registre
+  algo no período ou teste outro intervalo.
+- Se disser "Não foi possível gerar a recomendação agora", é falha na
+  chamada ao Gemini (rede, quota `429` ou `GEMINI_API_KEY` inválida) —
+  confira em `docker compose logs nanobot` a linha
+  `[gerar_recomendacao_financeira] falha ao chamar Gemini:` (o detalhe
+  fica só no log, nunca vai para o usuário).
+
 ### O bot não responde nada no Telegram
 
 - Confira `docker compose logs -f nanobot` enquanto manda uma mensagem —
@@ -385,7 +409,7 @@ orcamento-conversacional/
 │                                 #   do usuário do Telegram para um id interno.
 │
 ├── mcp_server/
-│   ├── expense_tools.py          # As 4 ferramentas do agente (ver seção 12).
+│   ├── expense_tools.py          # As 5 ferramentas do agente (ver seção 12).
 │   ├── dashboard_builder.py      # Página 1 do relatório: cabeçalho, cards de
 │   │                              #   KPI, gastos por categoria, composição,
 │   │                              #   evolução diária, principais gastos.
@@ -454,6 +478,14 @@ orcamento-conversacional/
   MCP — decisão tomada porque o suporte do Nanobot a recursos binários via
   MCP não é bem documentado/testado, enquanto uma chamada HTTP direta é
   previsível.
+- **Recomendações financeiras**: a tool `gerar_recomendacao_financeira`
+  consolida os dados do período (total, número de despesas, média por dia,
+  distribuição por categoria, maior despesa, distribuição por método de
+  pagamento) e faz uma chamada dedicada ao Gemini via `_chamar_gemini`
+  (prompt isolado, `temperature: 0.6`, sem markdown pesado). Diferente do
+  PDF, não envia arquivo nenhum — devolve só texto no campo
+  `recomendacao`, que o agente repassa no chat com aviso de caráter
+  informativo.
 
 ---
 
@@ -491,7 +523,7 @@ antiga para um nome de arquivo histórico.
 
 ## 12. Referência das ferramentas (tools) do agente
 
-O agente tem acesso a 4 ferramentas, registradas via MCP:
+O agente tem acesso a 5 ferramentas, registradas via MCP:
 
 | Tool | O que faz | Parâmetros obrigatórios |
 |---|---|---|
@@ -499,10 +531,14 @@ O agente tem acesso a 4 ferramentas, registradas via MCP:
 | `listar_despesas` | Lista despesas de um período, com total e quantidade | `data_inicio`, `data_fim` |
 | `resumo_por_categoria` | Total e % de participação por categoria num período | `data_inicio`, `data_fim` |
 | `gerar_relatorio_pdf` | Gera e envia o relatório em PDF (dashboard de 3 páginas) pelo Telegram | `data_inicio`, `data_fim` |
+| `gerar_recomendacao_financeira` | Gera de 2 a 4 dicas personalizadas em texto (sem arquivo) a partir dos gastos do período | `data_inicio`, `data_fim` |
 
 Em todas as tools que recebem período, o agente é instruído (via
-`SOUL.md`) a **perguntar** a data em vez de assumir um período, caso o
-usuário não informe.
+`SOUL.md`) a nunca assumir um período sozinho. No relatório ele sempre
+pergunta a data se o usuário não informar; na recomendação ele primeiro
+reutiliza um período usado há pouco nesta mesma conversa (por exemplo,
+de um relatório ou consulta recente) e só pergunta se não houver nenhum
+período recente.
 
 O relatório gerado por `gerar_relatorio_pdf` tem 3 páginas, cada uma
 desenhada por seu próprio módulo:
@@ -583,19 +619,17 @@ nanobot agent -c nanobot_config/config.json -m "Paguei 120 no mercado no cartão
 1. Testar o fluxo ponta a ponta com mensagens reais e ajustar o `SOUL.md`
    conforme os erros de extração observados (linguagem informal,
    abreviações, valores ambíguos).
-2. Implementar a camada de recomendações: consolidar os dados de
-   `resumo_por_categoria` e enviar para uma LLM avançada via API.
-3. Vincular automaticamente as despesas ao usuário do Telegram autenticado
+2. Vincular automaticamente as despesas ao usuário do Telegram autenticado
    (hoje o `telegram_id` é passado pelo modelo ao chamar a tool — pendência
    de segurança conhecida).
-4. Avaliação exploratória com usuários reais do público-alvo (18–29 anos).
+3. Avaliação exploratória com usuários reais do público-alvo (18–29 anos).
 
 ---
 
 ## Aviso sobre validação
 
 O pipeline foi validado em execução real com Docker: containers subindo,
-MCP conectado via stdio com as 4 tools registradas, e inserções no Postgres
+MCP conectado via stdio com as 5 tools registradas, e inserções no Postgres
 confirmadas via `psql`. A geração das 3 páginas do relatório foi validada
 com dados simulados (incluindo paginação automática da página 3 com mais
 de 80 despesas). A sintaxe do `docker-compose.yml` e dos JSONs de config é
