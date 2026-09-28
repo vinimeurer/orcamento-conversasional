@@ -34,7 +34,9 @@
         "args": ["mcp_server/expense_tools.py"],
         "env": {
           "DATABASE_URL": "${DATABASE_URL}",
-          "TELEGRAM_TOKEN": "${TELEGRAM_TOKEN}"
+          "TELEGRAM_TOKEN": "${TELEGRAM_TOKEN}",
+          "GEMINI_API_KEY": "${GEMINI_API_KEY}",
+          "GEMINI_MODEL": "${GEMINI_MODEL}"
         }
       }
     }
