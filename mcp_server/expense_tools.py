@@ -16,7 +16,7 @@ from dash_style import nome_categoria, nome_metodo_pagamento
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
 
 MESES_PT = [
     "", "janeiro", "fevereiro", "março", "abril", "maio", "junho",
@@ -434,9 +434,18 @@ def _chamar_gemini(prompt: str, max_tokens: int = 500) -> tuple[str | None, str 
 
     Retorna (texto, motivo_falha). Mesmo padrão de _enviar_pdf_telegram:
     só um dos dois vem preenchido.
+
+    Toda falha também é impressa em stderr (nunca em stdout — é o canal
+    de transporte do MCP) para aparecer em `docker compose logs nanobot`,
+    já que o motivo_falha em si nunca chega ao usuário (fica só no campo
+    "detalhe_tecnico", que o SOUL.md instrui o agente a não repetir).
     """
+    def _log_falha(motivo: str) -> str:
+        print(f"[gerar_recomendacao_financeira] falha ao chamar Gemini: {motivo}", file=sys.stderr)
+        return motivo
+
     if not GEMINI_API_KEY:
-        return None, "GEMINI_API_KEY não está definida no ambiente do servidor MCP."
+        return None, _log_falha("GEMINI_API_KEY não está definida no ambiente do servidor MCP.")
 
     url = (
         f"https://generativelanguage.googleapis.com/v1beta/models/"
@@ -450,16 +459,16 @@ def _chamar_gemini(prompt: str, max_tokens: int = 500) -> tuple[str | None, str 
     try:
         resp = requests.post(url, json=corpo, timeout=30)
     except requests.RequestException as exc:
-        return None, f"Erro de rede ao chamar a API do Gemini: {exc}"
+        return None, _log_falha(f"Erro de rede ao chamar a API do Gemini: {exc}")
 
     if not resp.ok:
-        return None, f"Gemini respondeu {resp.status_code}: {resp.text[:300]}"
+        return None, _log_falha(f"Gemini respondeu {resp.status_code}: {resp.text[:300]}")
 
     try:
         dados = resp.json()
         texto = dados["candidates"][0]["content"]["parts"][0]["text"]
     except (KeyError, IndexError, ValueError) as exc:
-        return None, f"Resposta inesperada da API do Gemini: {exc}"
+        return None, _log_falha(f"Resposta inesperada da API do Gemini: {exc} — corpo: {resp.text[:300]}")
 
     return texto.strip(), None
 
