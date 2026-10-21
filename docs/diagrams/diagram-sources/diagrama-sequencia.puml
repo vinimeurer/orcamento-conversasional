@@ -43,6 +43,25 @@ else Resumo por categoria
     DB --> M : Resumo por categoria
     M --> N : Tool Result
 
+else Relatório em PDF
+
+    G --> N : Tool Call: gerar_relatorio_pdf(...)
+    N -> M : Chama gerar_relatorio_pdf via MCP
+    M -> DB : SELECTs (resumos + despesas)
+    DB --> M : Dados do período
+    M -> T : sendDocument (PDF 3 páginas)
+    M --> N : Tool Result (sucesso)
+
+else Recomendações financeiras
+
+    G --> N : Tool Call: gerar_recomendacao_financeira(...)
+    N -> M : Chama gerar_recomendacao_financeira via MCP
+    M -> DB : SELECTs (resumos + despesas)
+    DB --> M : Dados consolidados
+    M -> G : Prompt consolidado (total, categorias, métodos)
+    G --> M : Texto 2-4 dicas
+    M --> N : Tool Result (recomendacao)
+
 end
 
 N -> G : Envia resultado da ferramenta
